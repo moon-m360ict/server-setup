@@ -51,9 +51,8 @@ TRACK_APP_DIR_CREATED=false
 TRACK_PM2_STARTED=false
 TRACK_NGINX_CONF_CREATED=false
 
-cleanup_on_error() {
-  local exit_code=$?
-  local line_no=$1
+cleanup_and_exit() {
+  local exit_code="${1:-1}"
 
   # Disable trap to avoid recursive loops
   trap - EXIT INT TERM ERR
@@ -142,7 +141,29 @@ cleanup_on_error() {
   exit "$exit_code"
 }
 
-trap 'cleanup_on_error $LINENO' EXIT INT TERM ERR
+handle_sigint() {
+  echo ""
+  echo -e "${YELLOW}${BOLD}⚠️  Cancellation requested (Ctrl+C).${NC}"
+  read -rp "👉 Are you sure you want to stop the installation? [y/N]: " CONFIRM_QUIT <&3
+  CONFIRM_QUIT="${CONFIRM_QUIT:-N}"
+  if [[ "$CONFIRM_QUIT" =~ ^[Yy]$ ]]; then
+    log_warn "Installation cancelled by user."
+    cleanup_and_exit 130
+  else
+    log_info "Continuing installation..."
+  fi
+}
+
+handle_error() {
+  local exit_code=$?
+  local line_no="${1:-unknown}"
+  log_error "Installation encountered an error at line $line_no (exit status: $exit_code)."
+  cleanup_and_exit "$exit_code"
+}
+
+trap handle_sigint INT
+trap 'handle_error $LINENO' ERR
+trap 'cleanup_and_exit $?' EXIT
 
 CURRENT_USER="${SUDO_USER:-$(whoami)}"
 USER_HOME=$(eval echo "~$CURRENT_USER")
