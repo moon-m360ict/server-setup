@@ -383,33 +383,40 @@ fi
 print_step_banner "5" "5" "Environment Variables (.env) Setup"
 print_info_field "Application environment configuration (.env file) for your Node.js app."
 echo ""
-echo -e "  ${BOLD}💡 Generated Database & Cache connection strings for your application:${NC}"
+echo -e "  ${BOLD}💡 The following default system variables will be generated automatically:${NC}"
 echo -e "  ┌────────────────────────────────────────────────────────────────────────┐"
 echo -e "  │ ${CYAN}PORT${NC}=${GREEN}$APP_PORT${NC}"
-echo -e "  │ ${CYAN}NODE_ENV${NC}=${GREEN}production${NC}"
-echo -e "  │ ${CYAN}DATABASE_URL${NC}=${GREEN}\"postgresql://$DB_USER:$DB_PASS@127.0.0.1:5432/$DB_NAME\"${NC}"
-echo -e "  │ ${CYAN}REDIS_URL${NC}=${GREEN}\"redis://127.0.0.1:$REDIS_PORT\"${NC}"
+echo -e "  │ ${CYAN}NODE_ENV${NC}=${GREEN}\"PROD\"${NC}"
+echo -e "  │ ${CYAN}DB_HOST${NC}=${GREEN}\"localhost\"${NC}"
+echo -e "  │ ${CYAN}DB_PORT${NC}=${GREEN}5432${NC}"
+echo -e "  │ ${CYAN}DB_NAME${NC}=${GREEN}\"$DB_NAME\"${NC}"
+echo -e "  │ ${CYAN}DB_USER${NC}=${GREEN}\"$DB_USER\"${NC}"
+echo -e "  │ ${CYAN}DB_PASSWORD${NC}=${GREEN}\"$DB_PASS\"${NC}"
+echo -e "  │ ${CYAN}DATABASE_URL${NC}=${GREEN}\"postgresql://$DB_USER:$DB_PASS@localhost:5432/$DB_NAME\"${NC}"
+echo -e "  │ ${CYAN}REDIS_HOST${NC}=${GREEN}\"127.0.0.1\"${NC}"
+echo -e "  │ ${CYAN}REDIS_PORT${NC}=${GREEN}\"$REDIS_PORT\"${NC}"
 echo -e "  └────────────────────────────────────────────────────────────────────────┘"
 echo ""
-print_hint_field "If you choose 'N', a starter .env file containing the above database"
-print_hint_field "and Redis credentials will be automatically generated at: $APP_DIR/.env"
+print_hint_field "You can paste additional environment variables (JWT_SECRET, API_KEYS, etc.)"
+print_hint_field "now, and they will be automatically appended to your .env file."
+print_hint_field "Press Enter (N) if you don't have extra variables right now."
 echo ""
 
-read -rp "👉 Do you want to paste a custom .env file now? [y/N]: " HAS_ENV <&3
-ENV_CONTENT=""
-if [[ "$HAS_ENV" =~ ^[Yy]$ ]]; then
+read -rp "👉 Do you want to paste additional .env variables now? [y/N]: " HAS_EXTRA_ENV <&3
+EXTRA_ENV_CONTENT=""
+if [[ "$HAS_EXTRA_ENV" =~ ^[Yy]$ ]]; then
   echo ""
-  echo -e "${CYAN}Type or paste your complete .env file content below.${NC}"
+  echo -e "${CYAN}Type or paste your additional .env variables below.${NC}"
   echo -e "${CYAN}When finished, type ${BOLD}END_OF_ENV${NC}${CYAN} on a new line and press Enter:${NC}"
   while IFS= read -r line <&3 || [ -n "$line" ]; do
     if [ "$line" = "END_OF_ENV" ]; then
       break
     fi
-    ENV_CONTENT+="$line"$'\n'
+    EXTRA_ENV_CONTENT+="$line"$'\n'
   done
-  log_success "Custom .env content captured."
+  log_success "Additional .env variables captured."
 else
-  log_info "A starter .env file with your generated credentials will be automatically created."
+  log_info "Default system variables will be generated. You can add more later at $APP_DIR/.env."
 fi
 
 # ------------------------------------------------------------------------------
@@ -429,10 +436,10 @@ echo -e "  ${BOLD}👤 PostgreSQL User:${NC}       ${GREEN}$DB_USER${NC}"
 echo -e "  ${BOLD}🔑 PostgreSQL Password:${NC}   ${YELLOW}$DB_PASS${NC}"
 echo -e "  ${BOLD}🌍 PostgreSQL Remote:${NC}     ${GREEN}${ALLOW_PG_REMOTE:-Y}${NC} (Allowed: ${GREEN}$PG_CLIENT_IP${NC})"
 echo -e "  ${BOLD}⚡ Redis Port:${NC}            ${GREEN}$REDIS_PORT${NC}$([ -n "$REDIS_PASS" ] && echo " (Password protected)" || echo " (No password)")"
-if [ -n "$ENV_CONTENT" ]; then
-  echo -e "  ${BOLD}📄 .env Configuration:${NC}    ${GREEN}Custom .env provided${NC}"
+if [ -n "$EXTRA_ENV_CONTENT" ]; then
+  echo -e "  ${BOLD}📄 .env Configuration:${NC}    ${GREEN}Default DB/Redis variables + custom variables${NC}"
 else
-  echo -e "  ${BOLD}📄 .env Configuration:${NC}    ${GREEN}Auto-generated starter .env with DB credentials${NC}"
+  echo -e "  ${BOLD}📄 .env Configuration:${NC}    ${GREEN}Default DB/Redis variables generated${NC}"
 fi
 echo -e "${CYAN}${BOLD}======================================================================${NC}"
 echo ""
@@ -626,29 +633,32 @@ fi
 cd "$APP_DIR"
 
 # Write .env file
-if [ -n "$ENV_CONTENT" ]; then
-  log_info "Writing custom .env configuration..."
-  echo "$ENV_CONTENT" > "$APP_DIR/.env"
-else
-  log_info "Writing starter .env configuration with PostgreSQL & Redis credentials..."
-  cat > "$APP_DIR/.env" <<ENVEOF
+log_info "Writing .env configuration..."
+cat > "$APP_DIR/.env" <<ENVEOF
 # Application Configuration
 PORT=$APP_PORT
-NODE_ENV=production
+NODE_ENV="PROD"
 
 # PostgreSQL Database Configuration
-DATABASE_URL=postgresql://$DB_USER:$DB_PASS@127.0.0.1:5432/$DB_NAME
-DB_HOST=127.0.0.1
+DB_HOST="localhost"
 DB_PORT=5432
-DB_NAME=$DB_NAME
-DB_USER=$DB_USER
-DB_PASSWORD=$DB_PASS
+DB_NAME="$DB_NAME"
+DB_USER="$DB_USER"
+DB_PASSWORD="$DB_PASS"
+DATABASE_URL="postgresql://$DB_USER:$DB_PASS@localhost:5432/$DB_NAME"
 
 # Redis Configuration
-REDIS_HOST=127.0.0.1
-REDIS_PORT=$REDIS_PORT
-$([ -n "$REDIS_PASS" ] && echo "REDIS_PASSWORD=$REDIS_PASS" || echo "# REDIS_PASSWORD=")
+REDIS_HOST="127.0.0.1"
+REDIS_PORT="$REDIS_PORT"
+$([ -n "$REDIS_PASS" ] && echo "REDIS_PASSWORD=\"$REDIS_PASS\"" || echo "# REDIS_PASSWORD=")
 ENVEOF
+
+if [ -n "$EXTRA_ENV_CONTENT" ]; then
+  cat >> "$APP_DIR/.env" <<EXTRAENVEOF
+
+# Additional Environment Variables
+$EXTRA_ENV_CONTENT
+EXTRAENVEOF
 fi
 chmod 600 "$APP_DIR/.env"
 chown "$CURRENT_USER:$CURRENT_USER" "$APP_DIR/.env"

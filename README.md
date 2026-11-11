@@ -46,7 +46,8 @@ When you run the script, it will interactively ask for:
    - Redis port (default: `6379`)
    - Optional Redis password
 5. **Environment Variables (.env)**:
-   - Option to paste `.env` contents inline, or skip and create it later at `$APP_DIR/.env`
+   - Automatically generates core system variables (`PORT`, `NODE_ENV="PROD"`, `DB_HOST="localhost"`, `DB_PORT=5432`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DATABASE_URL`, `REDIS_HOST="127.0.0.1"`, `REDIS_PORT="6379"`).
+   - Allows pasting any additional custom environment variables (e.g. `JWT_SECRET`, API keys) which are appended to the `.env` file.
 6. **Confirmation**:
    - Review the summary of settings before the automated installation begins.
 
