@@ -62,3 +62,4 @@ When you run the script, it will interactively ask for:
 - **Web Server**: Nginx reverse proxy with gzip, security headers, file upload limits, and WebSocket support.
 - **SSL**: Automated Certbot issuance with systemd renewal timer.
 - **Security**: UFW firewall (SSH, HTTP, HTTPS, optional remote Postgres) & Fail2ban brute-force protection.
+- **Error Rollback & Cleanup Trap**: If any step fails or you cancel with `Ctrl+C`, the script lists all resources created so far and prompts you to safely clean them up (removes created DB, Nginx config, App dir, PM2 process, Swapfile) to keep your server clean.

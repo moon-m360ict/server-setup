@@ -41,6 +41,109 @@ else
   exec 3<&0
 fi
 
+# ------------------------------------------------------------------------------
+# Resource Tracking & Error Rollback Cleanup Trap
+# ------------------------------------------------------------------------------
+TRACK_SWAP_CREATED=false
+TRACK_PG_DB_CREATED=false
+TRACK_PG_USER_CREATED=false
+TRACK_APP_DIR_CREATED=false
+TRACK_PM2_STARTED=false
+TRACK_NGINX_CONF_CREATED=false
+
+cleanup_on_error() {
+  local exit_code=$?
+  local line_no=$1
+
+  # Disable trap to avoid recursive loops
+  trap - EXIT INT TERM ERR
+
+  # If exit code is 0, normal successful exit
+  if [ "$exit_code" -eq 0 ]; then
+    return 0
+  fi
+
+  echo ""
+  echo -e "${RED}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${RED}${BOLD}  ⚠️  INSTALLATION STOPPED OR ENCOUNTERED AN ERROR (Exit code: ${exit_code})${NC}"
+  echo -e "${RED}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+  # Check if any resources were created
+  local any_created=false
+  if [ "$TRACK_SWAP_CREATED" = true ] || \
+     [ "$TRACK_PG_DB_CREATED" = true ] || \
+     [ "$TRACK_PG_USER_CREATED" = true ] || \
+     [ "$TRACK_APP_DIR_CREATED" = true ] || \
+     [ "$TRACK_PM2_STARTED" = true ] || \
+     [ "$TRACK_NGINX_CONF_CREATED" = true ]; then
+    any_created=true
+  fi
+
+  if [ "$any_created" = false ]; then
+    log_info "No application resources were created yet. Exiting cleanly."
+    exit "$exit_code"
+  fi
+
+  echo -e "The following resources were created before the script stopped:"
+  [ "$TRACK_APP_DIR_CREATED" = true ] && echo -e "  • Application Directory:  ${CYAN}$APP_DIR${NC}"
+  [ "$TRACK_PG_DB_CREATED" = true ] && echo -e "  • PostgreSQL Database:    ${CYAN}$DB_NAME${NC}"
+  [ "$TRACK_PG_USER_CREATED" = true ] && echo -e "  • PostgreSQL User:        ${CYAN}$DB_USER${NC}"
+  [ "$TRACK_PM2_STARTED" = true ] && echo -e "  • PM2 Process:            ${CYAN}server${NC}"
+  [ "$TRACK_NGINX_CONF_CREATED" = true ] && echo -e "  • Nginx Site Config:      ${CYAN}/etc/nginx/sites-available/$DOMAIN_NAME${NC}"
+  [ "$TRACK_SWAP_CREATED" = true ] && echo -e "  • Swapfile (2GB):         ${CYAN}/swapfile${NC}"
+  echo ""
+
+  read -rp "👉 Do you want to clean up (rollback) these newly created resources? [y/N]: " ROLLBACK_CONFIRM <&3
+  ROLLBACK_CONFIRM="${ROLLBACK_CONFIRM:-N}"
+
+  if [[ "$ROLLBACK_CONFIRM" =~ ^[Yy]$ ]]; then
+    echo ""
+    log_info "Initiating automatic rollback..."
+
+    if [ "$TRACK_PM2_STARTED" = true ]; then
+      log_info "Stopping and deleting PM2 process 'server'..."
+      sudo -u "$CURRENT_USER" pm2 delete server 2>/dev/null || true
+      sudo -u "$CURRENT_USER" pm2 save 2>/dev/null || true
+    fi
+
+    if [ "$TRACK_NGINX_CONF_CREATED" = true ]; then
+      log_info "Removing Nginx configuration for $DOMAIN_NAME..."
+      rm -f "/etc/nginx/sites-enabled/$DOMAIN_NAME" "/etc/nginx/sites-available/$DOMAIN_NAME"
+      nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true
+    fi
+
+    if [ "$TRACK_PG_DB_CREATED" = true ]; then
+      log_info "Dropping PostgreSQL database '$DB_NAME'..."
+      sudo -u postgres psql -c "DROP DATABASE IF EXISTS \"$DB_NAME\";" 2>/dev/null || true
+    fi
+
+    if [ "$TRACK_PG_USER_CREATED" = true ]; then
+      log_info "Dropping PostgreSQL user '$DB_USER'..."
+      sudo -u postgres psql -c "DROP USER IF EXISTS \"$DB_USER\";" 2>/dev/null || true
+    fi
+
+    if [ "$TRACK_APP_DIR_CREATED" = true ] && [ -d "$APP_DIR" ]; then
+      log_info "Removing application directory $APP_DIR..."
+      rm -rf "$APP_DIR"
+    fi
+
+    if [ "$TRACK_SWAP_CREATED" = true ]; then
+      log_info "Removing created Swapfile..."
+      swapoff /swapfile 2>/dev/null || true
+      rm -f /swapfile
+      sed -i '/\/swapfile/d' /etc/fstab 2>/dev/null || true
+    fi
+
+    log_success "Rollback complete. Server state cleaned up."
+  else
+    log_info "Resources retained for debugging. You can inspect logs or re-run the setup."
+  fi
+
+  exit "$exit_code"
+}
+
+trap 'cleanup_on_error $LINENO' EXIT INT TERM ERR
+
 CURRENT_USER="${SUDO_USER:-$(whoami)}"
 USER_HOME=$(eval echo "~$CURRENT_USER")
 
@@ -371,6 +474,7 @@ if [ "$SWAP_EXISTING" -le 1 ]; then
   fi
   sysctl vm.swappiness=20
   echo 'vm.swappiness=20' >> /etc/sysctl.conf
+  TRACK_SWAP_CREATED=true
   log_success "2GB Swap configured and enabled permanently."
 else
   log_info "Active swap already detected. Skipping swap creation."
@@ -411,13 +515,17 @@ PG_VERSION=$(sudo -u postgres psql -t -c "SELECT version();" | head -n 1 | awk '
 log_success "Installed PostgreSQL: $PG_VERSION"
 
 # Create Database and User
-sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname = '$DB_USER'" | grep -q 1 || \
+sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname = '$DB_USER'" | grep -q 1 || {
   sudo -u postgres psql -c "CREATE USER \"$DB_USER\" WITH PASSWORD '$DB_PASS';"
+  TRACK_PG_USER_CREATED=true
+}
 
 sudo -u postgres psql -c "ALTER USER \"$DB_USER\" WITH PASSWORD '$DB_PASS';"
 
-sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1 || \
+sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1 || {
   sudo -u postgres psql -c "CREATE DATABASE \"$DB_NAME\" OWNER \"$DB_USER\";"
+  TRACK_PG_DB_CREATED=true
+}
 
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE \"$DB_NAME\" TO \"$DB_USER\";"
 sudo -u postgres psql -d "$DB_NAME" -c "GRANT ALL ON SCHEMA public TO \"$DB_USER\";" || true
@@ -486,6 +594,7 @@ log_info "Step 6/8: Setting up application codebase..."
 if [ ! -d "$APP_DIR" ]; then
   log_info "Cloning repository $GIT_REPO_URL ($GIT_BRANCH)..."
   sudo -u "$CURRENT_USER" git clone -b "$GIT_BRANCH" "$GIT_REPO_URL" "$APP_DIR" <&3
+  TRACK_APP_DIR_CREATED=true
 else
   log_info "Directory $APP_DIR already exists. Pulling latest $GIT_BRANCH..."
   cd "$APP_DIR"
@@ -550,13 +659,13 @@ cd "$APP_DIR"
 if [ -f "ecosystem.config.js" ]; then
   pm2 reload ecosystem.config.js --update-env || pm2 start ecosystem.config.js
 elif [ -f "dist/server.js" ]; then
-  pm2 start dist/server.js --name "server" -i 2 --wait-ready --listen-timeout 10000 --kill-timeout 10000 || pm2 reload server
+  pm2 start dist/server.js --name "server" -i 2 --kill-timeout 5000 || pm2 reload server
 elif [ -f "dist/index.js" ]; then
-  pm2 start dist/index.js --name "server" -i 2 --wait-ready --listen-timeout 10000 --kill-timeout 10000 || pm2 reload server
+  pm2 start dist/index.js --name "server" -i 2 --kill-timeout 5000 || pm2 reload server
 elif [ -f "server.js" ]; then
-  pm2 start server.js --name "server" -i 2 --wait-ready --listen-timeout 10000 --kill-timeout 10000 || pm2 reload server
+  pm2 start server.js --name "server" -i 2 --kill-timeout 5000 || pm2 reload server
 elif [ -f "index.js" ]; then
-  pm2 start index.js --name "server" -i 2 --wait-ready --listen-timeout 10000 --kill-timeout 10000 || pm2 reload server
+  pm2 start index.js --name "server" -i 2 --kill-timeout 5000 || pm2 reload server
 else
   pm2 start npm --name "server" -- start || true
 fi
@@ -564,6 +673,7 @@ pm2 save || true
 EOF
 
 log_success "PM2 application cluster launched."
+TRACK_PM2_STARTED=true
 
 # ==============================================================================
 # STEP 8: CONFIGURE NGINX & SSL
@@ -622,9 +732,9 @@ server {
         proxy_pass http://node_backend;
         proxy_http_version 1.1;
 
-        # WebSocket headers
+        # WebSocket & HTTP/1.1 headers
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $http_connection;
 
         # Standard proxy headers
         proxy_set_header Host $host;
@@ -649,6 +759,7 @@ sed -i "s/DOMAIN_NAME_PLACEHOLDER/$DOMAIN_NAME/g" "$NGINX_CONF"
 # Enable site
 ln -sf "$NGINX_CONF" "/etc/nginx/sites-enabled/$DOMAIN_NAME"
 rm -f /etc/nginx/sites-enabled/default
+TRACK_NGINX_CONF_CREATED=true
 
 # Test and reload Nginx
 nginx -t
@@ -691,6 +802,9 @@ ufw --force enable
 systemctl enable fail2ban 2>/dev/null || true
 systemctl restart fail2ban 2>/dev/null || true
 log_success "UFW Firewall & Fail2ban active."
+
+# Clear trap so normal successful completion does not trigger error cleanup
+trap - EXIT INT TERM ERR
 
 # ==============================================================================
 # COMPLETION SUMMARY
