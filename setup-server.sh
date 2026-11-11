@@ -44,7 +44,7 @@ fi
 CURRENT_USER="${SUDO_USER:-$(whoami)}"
 USER_HOME=$(eval echo "~$CURRENT_USER")
 
-clear
+clear 2>/dev/null || true
 echo -e "${CYAN}${BOLD}"
 echo "======================================================================"
 echo "          🚀 FULL LINUX SERVER PRODUCTION SETUP SCRIPT                "
@@ -55,77 +55,227 @@ echo -e "${NC}"
 # ==============================================================================
 # STEP 1: INTERACTIVE CONFIGURATION GATHERING
 # ==============================================================================
-echo -e "${YELLOW}${BOLD}--- [1/5] Domain & SSL Configuration ---${NC}"
-read -rp "Enter your Domain Name (e.g. api.yourdomain.com): " DOMAIN_NAME <&3
-while [ -z "$DOMAIN_NAME" ]; do
-  log_warn "Domain name cannot be empty!"
-  read -rp "Enter your Domain Name: " DOMAIN_NAME <&3
-done
 
-read -rp "Enter Admin Email for SSL Certificate (e.g. admin@yourdomain.com): " SSL_EMAIL <&3
-while [ -z "$SSL_EMAIL" ]; do
-  log_warn "Email is required for Let's Encrypt notifications!"
-  read -rp "Enter Admin Email for SSL: " SSL_EMAIL <&3
-done
+print_step_banner() {
+  local num="$1"
+  local total="$2"
+  local title="$3"
+  echo ""
+  echo -e "${CYAN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${YELLOW}${BOLD}  Step [${num}/${total}]: ${title}${NC}"
+  echo -e "${CYAN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
 
+print_info_field() {
+  echo -e "  ${BLUE}${BOLD}▸ What it is:${NC} $1"
+}
+
+print_hint_field() {
+  echo -e "  ${YELLOW}${BOLD}▸ Note:${NC}       $1"
+}
+
+print_example_field() {
+  echo -e "  ${CYAN}${BOLD}▸ Example:${NC}    $1"
+}
+
+print_default_field() {
+  echo -e "  ${GREEN}${BOLD}▸ Default:${NC}    $1"
+}
+
+# ------------------------------------------------------------------------------
+# [1/5] Domain & SSL Certificate Configuration
+# ------------------------------------------------------------------------------
+print_step_banner "1" "5" "Domain & SSL Certificate Configuration"
+print_info_field "The public domain or subdomain where your API / backend will be hosted."
+print_hint_field "Ensure your DNS 'A' record points to this server IP before continuing."
+print_example_field "api.yourdomain.com  (Do not include http:// or https://)"
 echo ""
-echo -e "${YELLOW}${BOLD}--- [2/5] GitHub Repository Configuration ---${NC}"
-read -rp "Enter GitHub Repository URL (HTTPS or SSH): " GIT_REPO_URL <&3
+
+read -rp "👉 Enter Domain Name: " RAW_DOMAIN <&3
+DOMAIN_NAME=$(echo "$RAW_DOMAIN" | tr -d "[:space:]")
+DOMAIN_NAME="${DOMAIN_NAME#http://}"
+DOMAIN_NAME="${DOMAIN_NAME#https://}"
+DOMAIN_NAME="${DOMAIN_NAME%%/*}"
+
+while [ -z "$DOMAIN_NAME" ]; do
+  log_warn "Domain name cannot be empty! Please provide a domain (e.g. api.yourdomain.com)."
+  read -rp "👉 Enter Domain Name: " RAW_DOMAIN <&3
+  DOMAIN_NAME=$(echo "$RAW_DOMAIN" | tr -d "[:space:]")
+  DOMAIN_NAME="${DOMAIN_NAME#http://}"
+  DOMAIN_NAME="${DOMAIN_NAME#https://}"
+  DOMAIN_NAME="${DOMAIN_NAME%%/*}"
+done
+echo -e "   ${GREEN}✓ Configured Domain:${NC} ${BOLD}$DOMAIN_NAME${NC}"
+echo ""
+
+print_info_field "Admin email address for automated Let's Encrypt SSL certificate issuance."
+print_hint_field "Used by Let's Encrypt for renewal reminders and urgent security notices."
+print_example_field "admin@yourdomain.com"
+echo ""
+
+read -rp "👉 Enter Admin Email for SSL: " SSL_EMAIL <&3
+SSL_EMAIL=$(echo "$SSL_EMAIL" | tr -d "[:space:]")
+while [[ -z "$SSL_EMAIL" || ! "$SSL_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; do
+  log_warn "Please enter a valid email address (e.g. admin@yourdomain.com)!"
+  read -rp "👉 Enter Admin Email for SSL: " SSL_EMAIL <&3
+  SSL_EMAIL=$(echo "$SSL_EMAIL" | tr -d "[:space:]")
+done
+echo -e "   ${GREEN}✓ Configured SSL Email:${NC} ${BOLD}$SSL_EMAIL${NC}"
+
+# ------------------------------------------------------------------------------
+# [2/5] GitHub Repository & Application Setup
+# ------------------------------------------------------------------------------
+print_step_banner "2" "5" "GitHub Repository & Application Setup"
+print_info_field "The Git repository URL for your Node.js / TypeScript application codebase."
+print_hint_field "Public repos: https://github.com/username/project.git"
+print_hint_field "Private repos: https://<github_token>@github.com/username/project.git or SSH: git@github.com:username/project.git"
+print_example_field "https://github.com/your-org/backend-app.git"
+echo ""
+
+read -rp "👉 Enter GitHub Repository URL: " GIT_REPO_URL <&3
+GIT_REPO_URL=$(echo "$GIT_REPO_URL" | tr -d "[:space:]")
 while [ -z "$GIT_REPO_URL" ]; do
   log_warn "GitHub repository URL cannot be empty!"
-  read -rp "Enter GitHub Repository URL: " GIT_REPO_URL <&3
+  read -rp "👉 Enter GitHub Repository URL: " GIT_REPO_URL <&3
+  GIT_REPO_URL=$(echo "$GIT_REPO_URL" | tr -d "[:space:]")
 done
 
-read -rp "Enter Git Branch to deploy [default: main]: " GIT_BRANCH <&3
+REPO_NAME=$(basename -s .git "$GIT_REPO_URL")
+CLEAN_APP_NAME=$(echo "$REPO_NAME" | tr '-' '_' | tr '.' '_' | tr -dc 'a-zA-Z0-9_')
+CLEAN_APP_NAME="${CLEAN_APP_NAME:-app}"
+echo -e "   ${GREEN}✓ Configured Repository:${NC} ${BOLD}$GIT_REPO_URL${NC}"
+echo ""
+
+print_info_field "The Git branch you want to clone, build, and deploy."
+print_default_field "main (press Enter to accept default)"
+read -rp "👉 Enter Git Branch [default: main]: " GIT_BRANCH <&3
 GIT_BRANCH="${GIT_BRANCH:-main}"
+echo -e "   ${GREEN}✓ Configured Branch:${NC} ${BOLD}$GIT_BRANCH${NC}"
+echo ""
 
-DEFAULT_APP_DIR="$USER_HOME/$(basename -s .git "$GIT_REPO_URL")"
-read -rp "Enter Installation Directory [default: $DEFAULT_APP_DIR]: " APP_DIR <&3
+DEFAULT_APP_DIR="$USER_HOME/$REPO_NAME"
+print_info_field "Directory path on this server where the application will be cloned."
+print_default_field "$DEFAULT_APP_DIR (press Enter to accept default)"
+read -rp "👉 Enter Installation Directory [default: $DEFAULT_APP_DIR]: " APP_DIR <&3
 APP_DIR="${APP_DIR:-$DEFAULT_APP_DIR}"
+echo -e "   ${GREEN}✓ Configured Directory:${NC} ${BOLD}$APP_DIR${NC}"
+echo ""
 
-read -rp "Enter Node.js App Port [default: 5000]: " APP_PORT <&3
+print_info_field "Internal port where your Node.js application listens (process.env.PORT)."
+print_hint_field "Nginx will receive external HTTPS traffic and proxy it to this internal port."
+print_default_field "5000 (press Enter to accept default)"
+read -rp "👉 Enter Node.js App Port [default: 5000]: " APP_PORT <&3
 APP_PORT="${APP_PORT:-5000}"
+while [[ ! "$APP_PORT" =~ ^[0-9]+$ ]] || [ "$APP_PORT" -lt 1 ] || [ "$APP_PORT" -gt 65535 ]; do
+  log_warn "Invalid port! Please enter a valid port number between 1 and 65535."
+  read -rp "👉 Enter Node.js App Port [default: 5000]: " APP_PORT <&3
+  APP_PORT="${APP_PORT:-5000}"
+done
+echo -e "   ${GREEN}✓ Configured Port:${NC} ${BOLD}$APP_PORT${NC}"
 
+# ------------------------------------------------------------------------------
+# [3/5] PostgreSQL Database Configuration
+# ------------------------------------------------------------------------------
+print_step_banner "3" "5" "PostgreSQL Database Configuration"
+print_info_field "The script will automatically install PostgreSQL and create this database & user."
+DEFAULT_DB="${CLEAN_APP_NAME}_db"
+DEFAULT_USER="${CLEAN_APP_NAME}_user"
+
+print_default_field "Database Name: $DEFAULT_DB (press Enter to accept default)"
+read -rp "👉 Enter Database Name [default: $DEFAULT_DB]: " DB_NAME <&3
+DB_NAME="${DB_NAME:-$DEFAULT_DB}"
+echo -e "   ${GREEN}✓ Database Name:${NC} ${BOLD}$DB_NAME${NC}"
 echo ""
-echo -e "${YELLOW}${BOLD}--- [3/5] PostgreSQL Database Configuration ---${NC}"
-read -rp "Enter PostgreSQL Database Name [default: erm_db]: " DB_NAME <&3
-DB_NAME="${DB_NAME:-erm_db}"
 
-read -rp "Enter PostgreSQL Username [default: erm_user]: " DB_USER <&3
-DB_USER="${DB_USER:-erm_user}"
-
-read -rsp "Enter PostgreSQL Password (leave blank to auto-generate): " DB_PASS <&3
+print_default_field "Database User: $DEFAULT_USER (press Enter to accept default)"
+read -rp "👉 Enter Database Username [default: $DEFAULT_USER]: " DB_USER <&3
+DB_USER="${DB_USER:-$DEFAULT_USER}"
+echo -e "   ${GREEN}✓ Database User:${NC} ${BOLD}$DB_USER${NC}"
 echo ""
+
+print_info_field "Password for this PostgreSQL user."
+print_hint_field "Type a custom password, or press Enter to auto-generate a secure random 16-char password."
+read -rp "👉 Enter Database Password (press Enter to auto-generate): " DB_PASS <&3
 if [ -z "$DB_PASS" ]; then
   DB_PASS=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)
-  log_info "Auto-generated PostgreSQL Password: ${GREEN}${DB_PASS}${NC}"
+  log_info "Auto-generated Database Password: ${GREEN}${BOLD}${DB_PASS}${NC}"
+else
+  echo -e "   ${GREEN}✓ Custom Database Password set.${NC}"
 fi
+echo ""
 
-read -rp "Enable remote access to PostgreSQL from your local PC (DBeaver/pgAdmin)? (Y/n): " ALLOW_PG_REMOTE <&3
+print_info_field "Allow external database connections from your local PC (DBeaver, TablePlus, pgAdmin)?"
+print_hint_field "Opens PostgreSQL port 5432 in firewall and updates pg_hba.conf."
+print_default_field "Y (enabled) - press Enter to allow, or 'n' to keep localhost-only"
+read -rp "👉 Enable remote PostgreSQL access? [Y/n]: " ALLOW_PG_REMOTE <&3
 ALLOW_PG_REMOTE="${ALLOW_PG_REMOTE:-Y}"
 
 PG_CLIENT_IP="0.0.0.0/0"
 if [[ "$ALLOW_PG_REMOTE" =~ ^[Yy]$ ]]; then
-  read -rp "  Enter your Local Public IP to whitelist (leave blank for anywhere 0.0.0.0/0): " SPECIFIC_IP <&3
+  print_info_field "IP Whitelist for remote database access."
+  print_hint_field "For high security, enter your computer's public IP (from https://ipinfo.io/ip)."
+  print_hint_field "Press Enter to allow connections from any IP address (0.0.0.0/0)."
+  read -rp "👉 Enter your Local Public IP [press Enter for 0.0.0.0/0]: " SPECIFIC_IP <&3
+  SPECIFIC_IP=$(echo "$SPECIFIC_IP" | tr -d "[:space:]")
   if [ -n "$SPECIFIC_IP" ]; then
     PG_CLIENT_IP="${SPECIFIC_IP}/32"
+    echo -e "   ${GREEN}✓ Remote access allowed only from:${NC} ${BOLD}$PG_CLIENT_IP${NC}"
+  else
+    echo -e "   ${GREEN}✓ Remote access allowed from anywhere:${NC} ${BOLD}0.0.0.0/0${NC}"
   fi
+else
+  echo -e "   ${YELLOW}✓ Remote access disabled (PostgreSQL will only be accessible locally).${NC}"
 fi
 
-echo ""
-echo -e "${YELLOW}${BOLD}--- [4/5] Redis Configuration ---${NC}"
-read -rp "Enter Redis Port [default: 6379]: " REDIS_PORT <&3
+# ------------------------------------------------------------------------------
+# [4/5] Redis Cache Configuration
+# ------------------------------------------------------------------------------
+print_step_banner "4" "5" "Redis Cache Configuration"
+print_info_field "In-memory key-value cache and background job queue store (BullMQ, Redis client)."
+print_default_field "Port 6379 (press Enter to accept default)"
+read -rp "👉 Enter Redis Port [default: 6379]: " REDIS_PORT <&3
 REDIS_PORT="${REDIS_PORT:-6379}"
-
-read -rsp "Enter Redis Password (optional, press Enter for none): " REDIS_PASS <&3
+while [[ ! "$REDIS_PORT" =~ ^[0-9]+$ ]] || [ "$REDIS_PORT" -lt 1 ] || [ "$REDIS_PORT" -gt 65535 ]; do
+  log_warn "Invalid port! Please enter a valid port number between 1 and 65535."
+  read -rp "👉 Enter Redis Port [default: 6379]: " REDIS_PORT <&3
+  REDIS_PORT="${REDIS_PORT:-6379}"
+done
+echo -e "   ${GREEN}✓ Configured Redis Port:${NC} ${BOLD}$REDIS_PORT${NC}"
 echo ""
 
+print_info_field "Optional password authentication for Redis."
+print_hint_field "Redis is bound to localhost (127.0.0.1) only, so a password is optional."
+print_default_field "None (press Enter for no password)"
+read -rp "👉 Enter Redis Password (optional, press Enter for none): " REDIS_PASS <&3
+if [ -n "$REDIS_PASS" ]; then
+  echo -e "   ${GREEN}✓ Redis password configured.${NC}"
+else
+  echo -e "   ${GREEN}✓ No password set (localhost internal access only).${NC}"
+fi
+
+# ------------------------------------------------------------------------------
+# [5/5] Environment Variables (.env) Setup
+# ------------------------------------------------------------------------------
+print_step_banner "5" "5" "Environment Variables (.env) Setup"
+print_info_field "Application environment configuration (.env file) for your Node.js app."
 echo ""
-echo -e "${YELLOW}${BOLD}--- [5/5] Environment Variables (.env) Setup ---${NC}"
-read -rp "Do you want to paste your .env file content now? (y/N): " HAS_ENV <&3
+echo -e "  ${BOLD}💡 Generated Database & Cache connection strings for your application:${NC}"
+echo -e "  ┌────────────────────────────────────────────────────────────────────────┐"
+echo -e "  │ ${CYAN}PORT${NC}=${GREEN}$APP_PORT${NC}"
+echo -e "  │ ${CYAN}NODE_ENV${NC}=${GREEN}production${NC}"
+echo -e "  │ ${CYAN}DATABASE_URL${NC}=${GREEN}\"postgresql://$DB_USER:$DB_PASS@127.0.0.1:5432/$DB_NAME\"${NC}"
+echo -e "  │ ${CYAN}REDIS_URL${NC}=${GREEN}\"redis://127.0.0.1:$REDIS_PORT\"${NC}"
+echo -e "  └────────────────────────────────────────────────────────────────────────┘"
+echo ""
+print_hint_field "If you choose 'N', a starter .env file containing the above database"
+print_hint_field "and Redis credentials will be automatically generated at: $APP_DIR/.env"
+echo ""
+
+read -rp "👉 Do you want to paste a custom .env file now? [y/N]: " HAS_ENV <&3
 ENV_CONTENT=""
 if [[ "$HAS_ENV" =~ ^[Yy]$ ]]; then
-  echo -e "${CYAN}Type or paste your .env lines below.${NC}"
+  echo ""
+  echo -e "${CYAN}Type or paste your complete .env file content below.${NC}"
   echo -e "${CYAN}When finished, type ${BOLD}END_OF_ENV${NC}${CYAN} on a new line and press Enter:${NC}"
   while IFS= read -r line <&3 || [ -n "$line" ]; do
     if [ "$line" = "END_OF_ENV" ]; then
@@ -133,22 +283,37 @@ if [[ "$HAS_ENV" =~ ^[Yy]$ ]]; then
     fi
     ENV_CONTENT+="$line"$'\n'
   done
+  log_success "Custom .env content captured."
 else
-  log_info "Skipping .env input. You can create or edit '$APP_DIR/.env' later."
+  log_info "A starter .env file with your generated credentials will be automatically created."
 fi
 
+# ------------------------------------------------------------------------------
+# REVIEW & CONFIRMATION
+# ------------------------------------------------------------------------------
 echo ""
-echo -e "${CYAN}${BOLD}Summary of Settings:${NC}"
-echo -e "  Domain:         ${GREEN}$DOMAIN_NAME${NC}"
-echo -e "  SSL Email:      ${GREEN}$SSL_EMAIL${NC}"
-echo -e "  Git Repo:       ${GREEN}$GIT_REPO_URL ($GIT_BRANCH)${NC}"
-echo -e "  App Directory:  ${GREEN}$APP_DIR${NC}"
-echo -e "  App Port:       ${GREEN}$APP_PORT${NC}"
-echo -e "  Postgres DB:    ${GREEN}$DB_NAME${NC} (User: ${GREEN}$DB_USER${NC})"
-echo -e "  Postgres Remote:${GREEN}${ALLOW_PG_REMOTE:-Y} (Allowed: $PG_CLIENT_IP)${NC}"
-echo -e "  Redis Port:     ${GREEN}$REDIS_PORT${NC}"
+echo -e "${CYAN}${BOLD}======================================================================${NC}"
+echo -e "${CYAN}${BOLD}                     📋 CONFIGURATION SUMMARY                         ${NC}"
+echo -e "${CYAN}${BOLD}======================================================================${NC}"
+echo -e "  ${BOLD}🌐 Domain URL:${NC}            ${GREEN}https://$DOMAIN_NAME${NC}"
+echo -e "  ${BOLD}🔒 SSL Admin Email:${NC}       ${GREEN}$SSL_EMAIL${NC}"
+echo -e "  ${BOLD}📦 Git Repository:${NC}        ${GREEN}$GIT_REPO_URL${NC} (Branch: ${GREEN}$GIT_BRANCH${NC})"
+echo -e "  ${BOLD}📁 Installation Dir:${NC}      ${GREEN}$APP_DIR${NC}"
+echo -e "  ${BOLD}🔌 Node.js Internal Port:${NC} ${GREEN}$APP_PORT${NC} (Nginx proxies 80/443 -> $APP_PORT)"
+echo -e "  ${BOLD}🗄️ PostgreSQL Database:${NC}   ${GREEN}$DB_NAME${NC}"
+echo -e "  ${BOLD}👤 PostgreSQL User:${NC}       ${GREEN}$DB_USER${NC}"
+echo -e "  ${BOLD}🔑 PostgreSQL Password:${NC}   ${YELLOW}$DB_PASS${NC}"
+echo -e "  ${BOLD}🌍 PostgreSQL Remote:${NC}     ${GREEN}${ALLOW_PG_REMOTE:-Y}${NC} (Allowed: ${GREEN}$PG_CLIENT_IP${NC})"
+echo -e "  ${BOLD}⚡ Redis Port:${NC}            ${GREEN}$REDIS_PORT${NC}$([ -n "$REDIS_PASS" ] && echo " (Password protected)" || echo " (No password)")"
+if [ -n "$ENV_CONTENT" ]; then
+  echo -e "  ${BOLD}📄 .env Configuration:${NC}    ${GREEN}Custom .env provided${NC}"
+else
+  echo -e "  ${BOLD}📄 .env Configuration:${NC}    ${GREEN}Auto-generated starter .env with DB credentials${NC}"
+fi
+echo -e "${CYAN}${BOLD}======================================================================${NC}"
 echo ""
-read -rp "Are you ready to proceed with the automated installation? (Y/n): " CONFIRM <&3
+
+read -rp "👉 Are you ready to proceed with the automated installation? [Y/n]: " CONFIRM <&3
 CONFIRM="${CONFIRM:-Y}"
 if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
   log_warn "Installation aborted by user."
@@ -332,12 +497,32 @@ cd "$APP_DIR"
 
 # Write .env file
 if [ -n "$ENV_CONTENT" ]; then
-  log_info "Writing .env configuration..."
+  log_info "Writing custom .env configuration..."
   echo "$ENV_CONTENT" > "$APP_DIR/.env"
-  chmod 600 "$APP_DIR/.env"
-  chown "$CURRENT_USER:$CURRENT_USER" "$APP_DIR/.env"
-  log_success ".env file saved securely."
+else
+  log_info "Writing starter .env configuration with PostgreSQL & Redis credentials..."
+  cat > "$APP_DIR/.env" <<ENVEOF
+# Application Configuration
+PORT=$APP_PORT
+NODE_ENV=production
+
+# PostgreSQL Database Configuration
+DATABASE_URL=postgresql://$DB_USER:$DB_PASS@127.0.0.1:5432/$DB_NAME
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_NAME=$DB_NAME
+DB_USER=$DB_USER
+DB_PASSWORD=$DB_PASS
+
+# Redis Configuration
+REDIS_HOST=127.0.0.1
+REDIS_PORT=$REDIS_PORT
+$([ -n "$REDIS_PASS" ] && echo "REDIS_PASSWORD=$REDIS_PASS" || echo "# REDIS_PASSWORD=")
+ENVEOF
 fi
+chmod 600 "$APP_DIR/.env"
+chown "$CURRENT_USER:$CURRENT_USER" "$APP_DIR/.env"
+log_success ".env configuration saved securely at $APP_DIR/.env"
 
 # Install dependencies
 log_info "Installing application dependencies..."
@@ -514,7 +699,7 @@ END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 SERVER_IP=$(curl -s --max-time 4 https://ifconfig.me || curl -s --max-time 4 https://api.ipify.org || hostname -I 2>/dev/null | awk '{print $1}' || echo "YOUR_SERVER_IP")
 
-clear
+clear 2>/dev/null || true
 echo -e "${GREEN}${BOLD}"
 echo "======================================================================"
 echo "          🎉 SERVER PRODUCTION SETUP COMPLETED SUCCESSFULLY!          "
