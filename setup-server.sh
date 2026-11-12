@@ -402,16 +402,50 @@ print_hint_field "now, and they will be automatically appended to your .env file
 print_hint_field "Press Enter (N) if you don't have extra variables right now."
 echo ""
 
-read -rp "👉 Do you want to paste additional .env variables now? [y/N]: " HAS_EXTRA_ENV <&3
 EXTRA_ENV_CONTENT=""
-if [[ "$HAS_EXTRA_ENV" =~ ^[Yy]$ ]]; then
+NEED_EXTRA_ENV=false
+
+while true; do
+  if ! read -rp "👉 Do you want to paste additional .env variables now? [y/N]: " HAS_EXTRA_ENV <&3; then
+    HAS_EXTRA_ENV="n"
+  fi
+  HAS_EXTRA_ENV="${HAS_EXTRA_ENV%$'\r'}"
+  HAS_EXTRA_ENV="${HAS_EXTRA_ENV//$'\e[200~'/}"
+  HAS_EXTRA_ENV="${HAS_EXTRA_ENV//$'\e[201~'/}"
+  HAS_EXTRA_ENV_TRIMMED="${HAS_EXTRA_ENV#"${HAS_EXTRA_ENV%%[![:space:]]*}"}"
+  HAS_EXTRA_ENV_TRIMMED="${HAS_EXTRA_ENV_TRIMMED%"${HAS_EXTRA_ENV_TRIMMED##*[![:space:]]}"}"
+
+  if [[ "$HAS_EXTRA_ENV_TRIMMED" =~ ^[Yy]$ ]]; then
+    NEED_EXTRA_ENV=true
+    break
+  elif [[ -z "$HAS_EXTRA_ENV_TRIMMED" || "$HAS_EXTRA_ENV_TRIMMED" =~ ^[Nn]$ ]]; then
+    NEED_EXTRA_ENV=false
+    break
+  elif [[ "$HAS_EXTRA_ENV" == *"="* || "$HAS_EXTRA_ENV_TRIMMED" == \#* ]]; then
+    # User pasted .env content directly at the [y/N] prompt instead of typing 'y' first
+    log_info "Detected pasted .env line! Entering paste mode automatically..."
+    EXTRA_ENV_CONTENT+="$HAS_EXTRA_ENV"$'\n'
+    NEED_EXTRA_ENV=true
+    break
+  else
+    log_warn "Invalid choice '$HAS_EXTRA_ENV_TRIMMED'. Please enter 'y' to paste .env variables or 'n' to skip."
+  fi
+done
+
+if [ "$NEED_EXTRA_ENV" = true ]; then
   echo ""
-  echo -e "${CYAN}Type or paste your additional .env variables below.${NC}"
-  echo -e "${CYAN}When finished, type ${BOLD}END_OF_ENV${NC}${CYAN} on a new line and press Enter:${NC}"
+  echo -e "${CYAN}${BOLD}Type or paste your additional .env variables below.${NC}"
+  echo -e "${YELLOW}${BOLD}👉 When finished, type 'done' (or 'END_OF_ENV') on a new line and press Enter, or press Ctrl+D:${NC}"
   while IFS= read -r line <&3 || [ -n "$line" ]; do
-    if [ "$line" = "END_OF_ENV" ]; then
-      break
-    fi
+    line="${line%$'\r'}"
+    line="${line//$'\e[200~'/}"
+    line="${line//$'\e[201~'/}"
+    trimmed_line=$(echo "$line" | tr -d '[:space:]')
+    case "$trimmed_line" in
+      done|DONE|end|END|END_OF_ENV|end_of_env|EOF|eof)
+        break
+        ;;
+    esac
     EXTRA_ENV_CONTENT+="$line"$'\n'
   done
   log_success "Additional .env variables captured."
@@ -444,12 +478,24 @@ fi
 echo -e "${CYAN}${BOLD}======================================================================${NC}"
 echo ""
 
-read -rp "👉 Are you ready to proceed with the automated installation? [Y/n]: " CONFIRM <&3
-CONFIRM="${CONFIRM:-Y}"
-if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-  log_warn "Installation aborted by user."
-  exit 0
-fi
+while true; do
+  if ! read -rp "👉 Are you ready to proceed with the automated installation? [Y/n]: " CONFIRM <&3; then
+    echo ""
+    log_warn "Input stream closed (EOF). Installation aborted."
+    exit 0
+  fi
+  CONFIRM="${CONFIRM%$'\r'}"
+  CONFIRM=$(echo "$CONFIRM" | tr -d '[:space:]')
+  CONFIRM="${CONFIRM:-Y}"
+  if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
+    break
+  elif [[ "$CONFIRM" =~ ^[Nn]$ ]]; then
+    log_warn "Installation aborted by user."
+    exit 0
+  else
+    log_warn "Invalid input '$CONFIRM'. Please enter 'y' to proceed or 'n' to abort."
+  fi
+done
 
 START_TIME=$(date +%s)
 
@@ -654,11 +700,7 @@ $([ -n "$REDIS_PASS" ] && echo "REDIS_PASSWORD=\"$REDIS_PASS\"" || echo "# REDIS
 ENVEOF
 
 if [ -n "$EXTRA_ENV_CONTENT" ]; then
-  cat >> "$APP_DIR/.env" <<EXTRAENVEOF
-
-# Additional Environment Variables
-$EXTRA_ENV_CONTENT
-EXTRAENVEOF
+  printf '\n# Additional Environment Variables\n%s' "$EXTRA_ENV_CONTENT" >> "$APP_DIR/.env"
 fi
 chmod 600 "$APP_DIR/.env"
 chown "$CURRENT_USER:$CURRENT_USER" "$APP_DIR/.env"
