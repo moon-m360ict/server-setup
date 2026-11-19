@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # ==============================================================================
 # Complete Ubuntu / Debian Server Automated Setup Script
 # For: Node.js (TypeScript) + PostgreSQL + Redis + Nginx + SSL + PM2 + Firewall
@@ -201,11 +201,28 @@ print_default_field() {
 
 # Navigation hint shown at every step
 print_nav_hint() {
-  echo -e "  ${BOLD}▸ Tip:${NC}        Type ${CYAN}back${NC} to return to the previous step."
+  echo -e "  ${BOLD}▸ Tip:${NC}        Type ${CYAN}back${NC} to go back  |  Type ${CYAN}exit${NC} to quit setup."
 }
 
 print_nav_hint_skip() {
-  echo -e "  ${BOLD}▸ Tip:${NC}        Type ${CYAN}back${NC} to go back  |  Type ${CYAN}skip${NC} to skip this entire step."
+  echo -e "  ${BOLD}▸ Tip:${NC}        Type ${CYAN}back${NC} to go back  |  Type ${CYAN}skip${NC} to skip this step  |  Type ${CYAN}exit${NC} to quit."
+}
+
+# Shared nav-word resolver — call after every read
+# Sets global _NAV_ACTION: "back", "skip", "exit", or ""
+_resolve_nav() {
+  local _t
+  _t=$(echo "$1" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+  case "$_t" in
+    back) _NAV_ACTION="back" ;;
+    skip) _NAV_ACTION="skip" ;;
+    exit|quit|q)
+      echo ""
+      log_warn "Setup cancelled by user (exit)."
+      cleanup_and_exit 0
+      ;;
+    *) _NAV_ACTION="" ;;
+  esac
 }
 
 # ------------------------------------------------------------------------------
@@ -254,9 +271,8 @@ if [ "$CURRENT_STEP" -eq 1 ]; then
 
   while true; do
     read -rp "👉 Enter Domain Name [${DOMAIN_NAME:-required}]: " RAW_DOMAIN <&3
-    # 'back' at step 1 has nowhere to go — stay on step 1
-    [[ "$(echo "$RAW_DOMAIN" | tr -d '[:space:]')" == "back" ]] && {
-      log_warn "Already at step 1 — cannot go back further."; continue; }
+    _resolve_nav "$RAW_DOMAIN"
+    [[ "$_NAV_ACTION" == "back" ]] && { log_warn "Already at step 1 — cannot go back further."; continue; }
     RAW_DOMAIN="${RAW_DOMAIN:-$DOMAIN_NAME}"
     TMP=$(echo "$RAW_DOMAIN" | tr -d "[:space:]")
     TMP="${TMP#http://}"; TMP="${TMP#https://}"; TMP="${TMP%%/*}"
@@ -273,8 +289,8 @@ if [ "$CURRENT_STEP" -eq 1 ]; then
 
   while true; do
     read -rp "👉 Enter Admin Email for SSL [${SSL_EMAIL:-required}]: " _IN <&3
-    [[ "$(echo "$_IN" | tr -d '[:space:]')" == "back" ]] && {
-      log_warn "Already at step 1 — cannot go back further."; continue; }
+    _resolve_nav "$_IN"
+    [[ "$_NAV_ACTION" == "back" ]] && { log_warn "Already at step 1 — cannot go back further."; continue; }
     _IN="${_IN:-$SSL_EMAIL}"
     _IN=$(echo "$_IN" | tr -d "[:space:]")
     [[ -z "$_IN" || ! "$_IN" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] && {
