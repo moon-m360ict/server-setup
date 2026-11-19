@@ -868,9 +868,21 @@ log_info "Step 6/8: Setting up application codebase..."
 
 if [ ! -d "$APP_DIR" ]; then
   log_info "Cloning repository $GIT_REPO_URL ($GIT_BRANCH)..."
-  if ! sudo -u "$CURRENT_USER" git clone -b "$GIT_BRANCH" "$GIT_REPO_URL" "$APP_DIR" <&3; then
-    log_error "Failed to clone repository. Check the URL, authentication token, and network access."
-    log_error "You can re-enter the repository URL in step 2, or ensure the token is correct."
+  # Use token from environment if set; otherwise fall back to embedded URL
+  if [ -n "$GITHUB_TOKEN" ]; then
+    # Build a temporary credential file for Git
+    CRED_FILE="/tmp/git-cred-${RANDOM}"
+    echo "https://$GITHUB_TOKEN:@github.com" > "$CRED_FILE"
+    chmod 600 "$CRED_FILE"
+    sudo -u "$CURRENT_USER" git -c credential.helper="store --file=$CRED_FILE" clone -b "$GIT_BRANCH" "${GIT_REPO_URL%%@*}" "$APP_DIR" <&3
+    GIT_CLONE_STATUS=$?
+    rm -f "$CRED_FILE"
+  else
+    sudo -u "$CURRENT_USER" git clone -b "$GIT_BRANCH" "$GIT_REPO_URL" "$APP_DIR" <&3
+    GIT_CLONE_STATUS=$?
+  fi
+  if [ $GIT_CLONE_STATUS -ne 0 ]; then
+    log_error "Failed to clone repository. Verify the URL and token."
     exit 1
   fi
   TRACK_APP_DIR_CREATED=true
