@@ -868,7 +868,11 @@ log_info "Step 6/8: Setting up application codebase..."
 
 if [ ! -d "$APP_DIR" ]; then
   log_info "Cloning repository $GIT_REPO_URL ($GIT_BRANCH)..."
-  sudo -u "$CURRENT_USER" git clone -b "$GIT_BRANCH" "$GIT_REPO_URL" "$APP_DIR" <&3
+  if ! sudo -u "$CURRENT_USER" git clone -b "$GIT_BRANCH" "$GIT_REPO_URL" "$APP_DIR" <&3; then
+    log_error "Failed to clone repository. Check the URL, authentication token, and network access."
+    log_error "You can re-enter the repository URL in step 2, or ensure the token is correct."
+    exit 1
+  fi
   TRACK_APP_DIR_CREATED=true
 else
   log_info "Directory $APP_DIR already exists. Pulling latest $GIT_BRANCH..."
