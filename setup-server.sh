@@ -143,15 +143,8 @@ cleanup_and_exit() {
 
 handle_sigint() {
   echo ""
-  echo -e "${YELLOW}${BOLD}⚠️  Cancellation requested (Ctrl+C).${NC}"
-  read -rp "👉 Are you sure you want to stop the installation? [y/N]: " CONFIRM_QUIT <&3
-  CONFIRM_QUIT="${CONFIRM_QUIT:-N}"
-  if [[ "$CONFIRM_QUIT" =~ ^[Yy]$ ]]; then
-    log_warn "Installation cancelled by user."
-    cleanup_and_exit 130
-  else
-    log_info "Continuing installation..."
-  fi
+  echo -e "${RED}${BOLD}⚠️  Ctrl+C pressed — Installation cancelled by user.${NC}"
+  cleanup_and_exit 130
 }
 
 handle_error() {
@@ -206,295 +199,464 @@ print_default_field() {
   echo -e "  ${GREEN}${BOLD}▸ Default:${NC}    $1"
 }
 
-# ------------------------------------------------------------------------------
-# [1/5] Domain & SSL Certificate Configuration
-# ------------------------------------------------------------------------------
-print_step_banner "1" "5" "Domain & SSL Certificate Configuration"
-print_info_field "The public domain or subdomain where your API / backend will be hosted."
-print_hint_field "Ensure your DNS 'A' record points to this server IP before continuing."
-print_example_field "api.yourdomain.com  (Do not include http:// or https://)"
-echo ""
+# Navigation hint shown at every step
+print_nav_hint() {
+  echo -e "  ${BOLD}▸ Tip:${NC}        Type ${CYAN}back${NC} to return to the previous step."
+}
 
-read -rp "👉 Enter Domain Name: " RAW_DOMAIN <&3
-DOMAIN_NAME=$(echo "$RAW_DOMAIN" | tr -d "[:space:]")
-DOMAIN_NAME="${DOMAIN_NAME#http://}"
-DOMAIN_NAME="${DOMAIN_NAME#https://}"
-DOMAIN_NAME="${DOMAIN_NAME%%/*}"
-
-while [ -z "$DOMAIN_NAME" ]; do
-  log_warn "Domain name cannot be empty! Please provide a domain (e.g. api.yourdomain.com)."
-  read -rp "👉 Enter Domain Name: " RAW_DOMAIN <&3
-  DOMAIN_NAME=$(echo "$RAW_DOMAIN" | tr -d "[:space:]")
-  DOMAIN_NAME="${DOMAIN_NAME#http://}"
-  DOMAIN_NAME="${DOMAIN_NAME#https://}"
-  DOMAIN_NAME="${DOMAIN_NAME%%/*}"
-done
-echo -e "   ${GREEN}✓ Configured Domain:${NC} ${BOLD}$DOMAIN_NAME${NC}"
-echo ""
-
-print_info_field "Admin email address for automated Let's Encrypt SSL certificate issuance."
-print_hint_field "Used by Let's Encrypt for renewal reminders and urgent security notices."
-print_example_field "admin@yourdomain.com"
-echo ""
-
-read -rp "👉 Enter Admin Email for SSL: " SSL_EMAIL <&3
-SSL_EMAIL=$(echo "$SSL_EMAIL" | tr -d "[:space:]")
-while [[ -z "$SSL_EMAIL" || ! "$SSL_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; do
-  log_warn "Please enter a valid email address (e.g. admin@yourdomain.com)!"
-  read -rp "👉 Enter Admin Email for SSL: " SSL_EMAIL <&3
-  SSL_EMAIL=$(echo "$SSL_EMAIL" | tr -d "[:space:]")
-done
-echo -e "   ${GREEN}✓ Configured SSL Email:${NC} ${BOLD}$SSL_EMAIL${NC}"
+print_nav_hint_skip() {
+  echo -e "  ${BOLD}▸ Tip:${NC}        Type ${CYAN}back${NC} to go back  |  Type ${CYAN}skip${NC} to skip this entire step."
+}
 
 # ------------------------------------------------------------------------------
-# [2/5] GitHub Repository & Application Setup
+# Interactive Configuration: Step Navigation Loop
+# CURRENT_STEP drives which step renders; typing "back" decrements it.
+# Ctrl+C exits immediately (no confirmation) via handle_sigint.
 # ------------------------------------------------------------------------------
-print_step_banner "2" "5" "GitHub Repository & Application Setup"
-print_info_field "The Git repository URL for your Node.js / TypeScript application codebase."
-print_hint_field "Public repos: https://github.com/username/project.git"
-print_hint_field "Private repos: https://<github_token>@github.com/username/project.git or SSH: git@github.com:username/project.git"
-print_example_field "https://github.com/your-org/backend-app.git"
-echo ""
+CURRENT_STEP=1
+TOTAL_STEPS=5
 
-read -rp "👉 Enter GitHub Repository URL: " GIT_REPO_URL <&3
-GIT_REPO_URL=$(echo "$GIT_REPO_URL" | tr -d "[:space:]")
-while [ -z "$GIT_REPO_URL" ]; do
-  log_warn "GitHub repository URL cannot be empty!"
-  read -rp "👉 Enter GitHub Repository URL: " GIT_REPO_URL <&3
-  GIT_REPO_URL=$(echo "$GIT_REPO_URL" | tr -d "[:space:]")
-done
-
-REPO_NAME=$(basename -s .git "$GIT_REPO_URL")
-CLEAN_APP_NAME=$(echo "$REPO_NAME" | tr '-' '_' | tr '.' '_' | tr -dc 'a-zA-Z0-9_')
-CLEAN_APP_NAME="${CLEAN_APP_NAME:-app}"
-echo -e "   ${GREEN}✓ Configured Repository:${NC} ${BOLD}$GIT_REPO_URL${NC}"
-echo ""
-
-print_info_field "The Git branch you want to clone, build, and deploy."
-print_default_field "main (press Enter to accept default)"
-read -rp "👉 Enter Git Branch [default: main]: " GIT_BRANCH <&3
-GIT_BRANCH="${GIT_BRANCH:-main}"
-echo -e "   ${GREEN}✓ Configured Branch:${NC} ${BOLD}$GIT_BRANCH${NC}"
-echo ""
-
-DEFAULT_APP_DIR="$USER_HOME/$REPO_NAME"
-print_info_field "Directory path on this server where the application will be cloned."
-print_default_field "$DEFAULT_APP_DIR (press Enter to accept default)"
-read -rp "👉 Enter Installation Directory [default: $DEFAULT_APP_DIR]: " APP_DIR <&3
-APP_DIR="${APP_DIR:-$DEFAULT_APP_DIR}"
-echo -e "   ${GREEN}✓ Configured Directory:${NC} ${BOLD}$APP_DIR${NC}"
-echo ""
-
-print_info_field "Internal port where your Node.js application listens (process.env.PORT)."
-print_hint_field "Nginx will receive external HTTPS traffic and proxy it to this internal port."
-print_default_field "5000 (press Enter to accept default)"
-read -rp "👉 Enter Node.js App Port [default: 5000]: " APP_PORT <&3
-APP_PORT="${APP_PORT:-5000}"
-while [[ ! "$APP_PORT" =~ ^[0-9]+$ ]] || [ "$APP_PORT" -lt 1 ] || [ "$APP_PORT" -gt 65535 ]; do
-  log_warn "Invalid port! Please enter a valid port number between 1 and 65535."
-  read -rp "👉 Enter Node.js App Port [default: 5000]: " APP_PORT <&3
-  APP_PORT="${APP_PORT:-5000}"
-done
-echo -e "   ${GREEN}✓ Configured Port:${NC} ${BOLD}$APP_PORT${NC}"
-
-# ------------------------------------------------------------------------------
-# [3/5] PostgreSQL Database Configuration
-# ------------------------------------------------------------------------------
-print_step_banner "3" "5" "PostgreSQL Database Configuration"
-print_info_field "The script will automatically install PostgreSQL and create this database & user."
-DEFAULT_DB="${CLEAN_APP_NAME}_db"
-DEFAULT_USER="${CLEAN_APP_NAME}_user"
-
-print_default_field "Database Name: $DEFAULT_DB (press Enter to accept default)"
-read -rp "👉 Enter Database Name [default: $DEFAULT_DB]: " DB_NAME <&3
-DB_NAME="${DB_NAME:-$DEFAULT_DB}"
-echo -e "   ${GREEN}✓ Database Name:${NC} ${BOLD}$DB_NAME${NC}"
-echo ""
-
-print_default_field "Database User: $DEFAULT_USER (press Enter to accept default)"
-read -rp "👉 Enter Database Username [default: $DEFAULT_USER]: " DB_USER <&3
-DB_USER="${DB_USER:-$DEFAULT_USER}"
-echo -e "   ${GREEN}✓ Database User:${NC} ${BOLD}$DB_USER${NC}"
-echo ""
-
-print_info_field "Password for this PostgreSQL user."
-print_hint_field "Type a custom password, or press Enter to auto-generate a secure random 16-char password."
-read -rp "👉 Enter Database Password (press Enter to auto-generate): " DB_PASS <&3
-if [ -z "$DB_PASS" ]; then
-  DB_PASS=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)
-  log_info "Auto-generated Database Password: ${GREEN}${BOLD}${DB_PASS}${NC}"
-else
-  echo -e "   ${GREEN}✓ Custom Database Password set.${NC}"
-fi
-echo ""
-
-print_info_field "Allow external database connections from your local PC (DBeaver, TablePlus, pgAdmin)?"
-print_hint_field "Opens PostgreSQL port 5432 in firewall and updates pg_hba.conf."
-print_default_field "Y (enabled) - press Enter to allow, or 'n' to keep localhost-only"
-read -rp "👉 Enable remote PostgreSQL access? [Y/n]: " ALLOW_PG_REMOTE <&3
-ALLOW_PG_REMOTE="${ALLOW_PG_REMOTE:-Y}"
-
+# Initialise all config vars so "back" from step 2+ shows prior answers
+DOMAIN_NAME=""
+SSL_EMAIL=""
+GIT_REPO_URL=""
+GIT_BRANCH=""
+APP_DIR=""
+APP_PORT=""
+REPO_NAME=""
+CLEAN_APP_NAME=""
+DB_NAME=""
+DB_USER=""
+DB_PASS=""
+ALLOW_PG_REMOTE=""
 PG_CLIENT_IP="0.0.0.0/0"
-if [[ "$ALLOW_PG_REMOTE" =~ ^[Yy]$ ]]; then
-  print_info_field "IP Whitelist for remote database access."
-  print_hint_field "For high security, enter your computer's public IP (from https://ipinfo.io/ip)."
-  print_hint_field "Press Enter to allow connections from any IP address (0.0.0.0/0)."
-  read -rp "👉 Enter your Local Public IP [press Enter for 0.0.0.0/0]: " SPECIFIC_IP <&3
-  SPECIFIC_IP=$(echo "$SPECIFIC_IP" | tr -d "[:space:]")
-  if [ -n "$SPECIFIC_IP" ]; then
-    PG_CLIENT_IP="${SPECIFIC_IP}/32"
-    echo -e "   ${GREEN}✓ Remote access allowed only from:${NC} ${BOLD}$PG_CLIENT_IP${NC}"
-  else
-    echo -e "   ${GREEN}✓ Remote access allowed from anywhere:${NC} ${BOLD}0.0.0.0/0${NC}"
-  fi
-else
-  echo -e "   ${YELLOW}✓ Remote access disabled (PostgreSQL will only be accessible locally).${NC}"
-fi
-
-# ------------------------------------------------------------------------------
-# [4/5] Redis Cache Configuration
-# ------------------------------------------------------------------------------
-print_step_banner "4" "5" "Redis Cache Configuration"
-print_info_field "In-memory key-value cache and background job queue store (BullMQ, Redis client)."
-print_default_field "Port 6379 (press Enter to accept default)"
-read -rp "👉 Enter Redis Port [default: 6379]: " REDIS_PORT <&3
-REDIS_PORT="${REDIS_PORT:-6379}"
-while [[ ! "$REDIS_PORT" =~ ^[0-9]+$ ]] || [ "$REDIS_PORT" -lt 1 ] || [ "$REDIS_PORT" -gt 65535 ]; do
-  log_warn "Invalid port! Please enter a valid port number between 1 and 65535."
-  read -rp "👉 Enter Redis Port [default: 6379]: " REDIS_PORT <&3
-  REDIS_PORT="${REDIS_PORT:-6379}"
-done
-echo -e "   ${GREEN}✓ Configured Redis Port:${NC} ${BOLD}$REDIS_PORT${NC}"
-echo ""
-
-print_info_field "Optional password authentication for Redis."
-print_hint_field "Redis is bound to localhost (127.0.0.1) only, so a password is optional."
-print_default_field "None (press Enter for no password)"
-read -rp "👉 Enter Redis Password (optional, press Enter for none): " REDIS_PASS <&3
-if [ -n "$REDIS_PASS" ]; then
-  echo -e "   ${GREEN}✓ Redis password configured.${NC}"
-else
-  echo -e "   ${GREEN}✓ No password set (localhost internal access only).${NC}"
-fi
-
-# ------------------------------------------------------------------------------
-# [5/5] Environment Variables (.env) Setup
-# ------------------------------------------------------------------------------
-print_step_banner "5" "5" "Environment Variables (.env) Setup"
-print_info_field "Application environment configuration (.env file) for your Node.js app."
-echo ""
-echo -e "  ${BOLD}💡 The following default system variables will be generated automatically:${NC}"
-echo -e "  ┌────────────────────────────────────────────────────────────────────────┐"
-echo -e "  │ ${CYAN}PORT${NC}=${GREEN}$APP_PORT${NC}"
-echo -e "  │ ${CYAN}NODE_ENV${NC}=${GREEN}\"PROD\"${NC}"
-echo -e "  │ ${CYAN}DB_HOST${NC}=${GREEN}\"localhost\"${NC}"
-echo -e "  │ ${CYAN}DB_PORT${NC}=${GREEN}5432${NC}"
-echo -e "  │ ${CYAN}DB_NAME${NC}=${GREEN}\"$DB_NAME\"${NC}"
-echo -e "  │ ${CYAN}DB_USER${NC}=${GREEN}\"$DB_USER\"${NC}"
-echo -e "  │ ${CYAN}DB_PASS${NC}=${GREEN}\"$DB_PASS\"${NC}"
-echo -e "  │ ${CYAN}REDIS_HOST${NC}=${GREEN}\"127.0.0.1\"${NC}"
-echo -e "  │ ${CYAN}REDIS_PORT${NC}=${GREEN}\"$REDIS_PORT\"${NC}"
-echo -e "  └────────────────────────────────────────────────────────────────────────┘"
-echo ""
-print_hint_field "You can paste additional environment variables (JWT_SECRET, API_KEYS, etc.)"
-print_hint_field "now, and they will be automatically appended to your .env file."
-print_hint_field "Press Enter (N) if you don't have extra variables right now."
-echo ""
-
+SPECIFIC_IP=""
+REDIS_PORT=""
+REDIS_PASS=""
 EXTRA_ENV_CONTENT=""
 NEED_EXTRA_ENV=false
+# skip flags (set to true when user types 'skip' at the step banner)
+SKIP_POSTGRES=false
+SKIP_REDIS=false
 
-while true; do
-  if ! read -rp "👉 Do you want to paste additional .env variables now? [y/N]: " HAS_EXTRA_ENV <&3; then
-    HAS_EXTRA_ENV="n"
-  fi
-  HAS_EXTRA_ENV="${HAS_EXTRA_ENV%$'\r'}"
-  HAS_EXTRA_ENV="${HAS_EXTRA_ENV//$'\e[200~'/}"
-  HAS_EXTRA_ENV="${HAS_EXTRA_ENV//$'\e[201~'/}"
-  HAS_EXTRA_ENV_TRIMMED="${HAS_EXTRA_ENV#"${HAS_EXTRA_ENV%%[![:space:]]*}"}"
-  HAS_EXTRA_ENV_TRIMMED="${HAS_EXTRA_ENV_TRIMMED%"${HAS_EXTRA_ENV_TRIMMED##*[![:space:]]}"}"
+while [ "$CURRENT_STEP" -le "$TOTAL_STEPS" ]; do
 
-  if [[ "$HAS_EXTRA_ENV_TRIMMED" =~ ^[Yy]$ ]]; then
-    NEED_EXTRA_ENV=true
-    break
-  elif [[ -z "$HAS_EXTRA_ENV_TRIMMED" || "$HAS_EXTRA_ENV_TRIMMED" =~ ^[Nn]$ ]]; then
-    NEED_EXTRA_ENV=false
-    break
-  elif [[ "$HAS_EXTRA_ENV" == *"="* || "$HAS_EXTRA_ENV_TRIMMED" == \#* ]]; then
-    # User pasted .env content directly at the [y/N] prompt instead of typing 'y' first
-    log_info "Detected pasted .env line! Entering paste mode automatically..."
-    EXTRA_ENV_CONTENT+="$HAS_EXTRA_ENV"$'\n'
-    NEED_EXTRA_ENV=true
-    break
-  else
-    log_warn "Invalid choice '$HAS_EXTRA_ENV_TRIMMED'. Please enter 'y' to paste .env variables or 'n' to skip."
-  fi
-done
-
-if [ "$NEED_EXTRA_ENV" = true ]; then
+# ==============================================================================
+# STEP 1: Domain & SSL
+# ==============================================================================
+if [ "$CURRENT_STEP" -eq 1 ]; then
+  print_step_banner "1" "$TOTAL_STEPS" "Domain & SSL Certificate Configuration"
+  print_nav_hint
+  print_info_field "The public domain or subdomain where your API / backend will be hosted."
+  print_hint_field "Ensure your DNS 'A' record points to this server IP before continuing."
+  print_example_field "api.yourdomain.com  (Do not include http:// or https://)"
   echo ""
-  echo -e "${CYAN}${BOLD}Type or paste your additional .env variables below.${NC}"
-  echo -e "${YELLOW}${BOLD}👉 When finished, type 'done' (or 'END_OF_ENV') on a new line and press Enter, or press Ctrl+D:${NC}"
-  while IFS= read -r line <&3 || [ -n "$line" ]; do
-    line="${line%$'\r'}"
-    line="${line//$'\e[200~'/}"
-    line="${line//$'\e[201~'/}"
-    trimmed_line=$(echo "$line" | tr -d '[:space:]')
-    case "$trimmed_line" in
-      done|DONE|end|END|END_OF_ENV|end_of_env|EOF|eof)
-        break
-        ;;
-    esac
-    EXTRA_ENV_CONTENT+="$line"$'\n'
+
+  while true; do
+    read -rp "👉 Enter Domain Name [${DOMAIN_NAME:-required}]: " RAW_DOMAIN <&3
+    # 'back' at step 1 has nowhere to go — stay on step 1
+    [[ "$(echo "$RAW_DOMAIN" | tr -d '[:space:]')" == "back" ]] && {
+      log_warn "Already at step 1 — cannot go back further."; continue; }
+    RAW_DOMAIN="${RAW_DOMAIN:-$DOMAIN_NAME}"
+    TMP=$(echo "$RAW_DOMAIN" | tr -d "[:space:]")
+    TMP="${TMP#http://}"; TMP="${TMP#https://}"; TMP="${TMP%%/*}"
+    [ -z "$TMP" ] && { log_warn "Domain name cannot be empty! (e.g. api.yourdomain.com)"; continue; }
+    DOMAIN_NAME="$TMP"; break
   done
-  log_success "Additional .env variables captured."
-else
-  log_info "Default system variables will be generated. You can add more later at $APP_DIR/.env."
+  echo -e "   ${GREEN}✓ Configured Domain:${NC} ${BOLD}$DOMAIN_NAME${NC}"
+  echo ""
+
+  print_info_field "Admin email address for automated Let's Encrypt SSL certificate issuance."
+  print_hint_field "Used by Let's Encrypt for renewal reminders and urgent security notices."
+  print_example_field "admin@yourdomain.com"
+  echo ""
+
+  while true; do
+    read -rp "👉 Enter Admin Email for SSL [${SSL_EMAIL:-required}]: " _IN <&3
+    [[ "$(echo "$_IN" | tr -d '[:space:]')" == "back" ]] && {
+      log_warn "Already at step 1 — cannot go back further."; continue; }
+    _IN="${_IN:-$SSL_EMAIL}"
+    _IN=$(echo "$_IN" | tr -d "[:space:]")
+    [[ -z "$_IN" || ! "$_IN" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] && {
+      log_warn "Please enter a valid email address (e.g. admin@yourdomain.com)!"; continue; }
+    SSL_EMAIL="$_IN"; break
+  done
+  echo -e "   ${GREEN}✓ Configured SSL Email:${NC} ${BOLD}$SSL_EMAIL${NC}"
+
+  CURRENT_STEP=2
+  continue
 fi
 
-# ------------------------------------------------------------------------------
-# REVIEW & CONFIRMATION
-# ------------------------------------------------------------------------------
-echo ""
-echo -e "${CYAN}${BOLD}======================================================================${NC}"
-echo -e "${CYAN}${BOLD}                     📋 CONFIGURATION SUMMARY                         ${NC}"
-echo -e "${CYAN}${BOLD}======================================================================${NC}"
-echo -e "  ${BOLD}🌐 Domain URL:${NC}            ${GREEN}https://$DOMAIN_NAME${NC}"
-echo -e "  ${BOLD}🔒 SSL Admin Email:${NC}       ${GREEN}$SSL_EMAIL${NC}"
-echo -e "  ${BOLD}📦 Git Repository:${NC}        ${GREEN}$GIT_REPO_URL${NC} (Branch: ${GREEN}$GIT_BRANCH${NC})"
-echo -e "  ${BOLD}📁 Installation Dir:${NC}      ${GREEN}$APP_DIR${NC}"
-echo -e "  ${BOLD}🔌 Node.js Internal Port:${NC} ${GREEN}$APP_PORT${NC} (Nginx proxies 80/443 -> $APP_PORT)"
-echo -e "  ${BOLD}🗄️ PostgreSQL Database:${NC}   ${GREEN}$DB_NAME${NC}"
-echo -e "  ${BOLD}👤 PostgreSQL User:${NC}       ${GREEN}$DB_USER${NC}"
-echo -e "  ${BOLD}🔑 PostgreSQL Password:${NC}   ${YELLOW}$DB_PASS${NC}"
-echo -e "  ${BOLD}🌍 PostgreSQL Remote:${NC}     ${GREEN}${ALLOW_PG_REMOTE:-Y}${NC} (Allowed: ${GREEN}$PG_CLIENT_IP${NC})"
-echo -e "  ${BOLD}⚡ Redis Port:${NC}            ${GREEN}$REDIS_PORT${NC}$([ -n "$REDIS_PASS" ] && echo " (Password protected)" || echo " (No password)")"
-if [ -n "$EXTRA_ENV_CONTENT" ]; then
-  echo -e "  ${BOLD}📄 .env Configuration:${NC}    ${GREEN}Default DB/Redis variables + custom variables${NC}"
-else
-  echo -e "  ${BOLD}📄 .env Configuration:${NC}    ${GREEN}Default DB/Redis variables generated${NC}"
-fi
-echo -e "${CYAN}${BOLD}======================================================================${NC}"
-echo ""
+# ==============================================================================
+# STEP 2: GitHub Repository & Application Setup
+# ==============================================================================
+if [ "$CURRENT_STEP" -eq 2 ]; then
+  print_step_banner "2" "$TOTAL_STEPS" "GitHub Repository & Application Setup"
+  print_nav_hint
+  print_info_field "The Git repository URL for your Node.js / TypeScript application codebase."
+  print_hint_field "Public repos: https://github.com/username/project.git"
+  print_hint_field "Private repos: https://<github_token>@github.com/username/project.git or SSH: git@github.com:username/project.git"
+  print_example_field "https://github.com/your-org/backend-app.git"
+  echo ""
 
-while true; do
-  if ! read -rp "👉 Are you ready to proceed with the automated installation? [Y/n]: " CONFIRM <&3; then
-    echo ""
-    log_warn "Input stream closed (EOF). Installation aborted."
-    exit 0
-  fi
-  CONFIRM="${CONFIRM%$'\r'}"
-  CONFIRM=$(echo "$CONFIRM" | tr -d '[:space:]')
-  CONFIRM="${CONFIRM:-Y}"
-  if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
+  while true; do
+    read -rp "👉 Enter GitHub Repository URL [${GIT_REPO_URL:-required}]: " _IN <&3
+    [[ "$(echo "$_IN" | tr -d '[:space:]')" == "back" ]] && { CURRENT_STEP=1; break; }
+    _IN="${_IN:-$GIT_REPO_URL}"
+    _IN=$(echo "$_IN" | tr -d "[:space:]")
+    [ -z "$_IN" ] && { log_warn "GitHub repository URL cannot be empty!"; continue; }
+    GIT_REPO_URL="$_IN"
+    REPO_NAME=$(basename -s .git "$GIT_REPO_URL")
+    CLEAN_APP_NAME=$(echo "$REPO_NAME" | tr '-' '_' | tr '.' '_' | tr -dc 'a-zA-Z0-9_')
+    CLEAN_APP_NAME="${CLEAN_APP_NAME:-app}"
+    echo -e "   ${GREEN}✓ Configured Repository:${NC} ${BOLD}$GIT_REPO_URL${NC}"
     break
-  elif [[ "$CONFIRM" =~ ^[Nn]$ ]]; then
-    log_warn "Installation aborted by user."
-    exit 0
+  done
+  [ "$CURRENT_STEP" -eq 1 ] && continue
+  echo ""
+
+  while true; do
+    read -rp "👉 Enter Git Branch [default: ${GIT_BRANCH:-main}]: " _IN <&3
+    [[ "$(echo "$_IN" | tr -d '[:space:]')" == "back" ]] && { CURRENT_STEP=1; break; }
+    GIT_BRANCH="${_IN:-${GIT_BRANCH:-main}}"
+    echo -e "   ${GREEN}✓ Configured Branch:${NC} ${BOLD}$GIT_BRANCH${NC}"
+    break
+  done
+  [ "$CURRENT_STEP" -eq 1 ] && continue
+  echo ""
+
+  DEFAULT_APP_DIR="$USER_HOME/$REPO_NAME"
+  _DEFAULT_DIR="${APP_DIR:-$DEFAULT_APP_DIR}"
+  print_info_field "Directory path on this server where the application will be cloned."
+  print_default_field "$_DEFAULT_DIR (press Enter to accept default)"
+  while true; do
+    read -rp "👉 Enter Installation Directory [default: $_DEFAULT_DIR]: " _IN <&3
+    [[ "$(echo "$_IN" | tr -d '[:space:]')" == "back" ]] && { CURRENT_STEP=1; break; }
+    APP_DIR="${_IN:-$_DEFAULT_DIR}"
+    echo -e "   ${GREEN}✓ Configured Directory:${NC} ${BOLD}$APP_DIR${NC}"
+    break
+  done
+  [ "$CURRENT_STEP" -eq 1 ] && continue
+  echo ""
+
+  print_info_field "Internal port where your Node.js application listens (process.env.PORT)."
+  print_hint_field "Nginx will receive external HTTPS traffic and proxy it to this internal port."
+  print_default_field "${APP_PORT:-5000} (press Enter to accept default)"
+  while true; do
+    read -rp "👉 Enter Node.js App Port [default: ${APP_PORT:-5000}]: " _IN <&3
+    [[ "$(echo "$_IN" | tr -d '[:space:]')" == "back" ]] && { CURRENT_STEP=1; break; }
+    _IN="${_IN:-${APP_PORT:-5000}}"
+    [[ ! "$_IN" =~ ^[0-9]+$ ]] || [ "$_IN" -lt 1 ] || [ "$_IN" -gt 65535 ] && {
+      log_warn "Invalid port! Please enter a number between 1 and 65535."; continue; }
+    APP_PORT="$_IN"
+    echo -e "   ${GREEN}✓ Configured Port:${NC} ${BOLD}$APP_PORT${NC}"
+    break
+  done
+  [ "$CURRENT_STEP" -eq 1 ] && continue
+
+  CURRENT_STEP=3
+  continue
+fi
+
+# ==============================================================================
+# STEP 3: PostgreSQL Database Configuration
+# ==============================================================================
+if [ "$CURRENT_STEP" -eq 3 ]; then
+  print_step_banner "3" "$TOTAL_STEPS" "PostgreSQL Database Configuration"
+  print_nav_hint_skip
+  print_info_field "The script will automatically install PostgreSQL and create this database & user."
+  echo ""
+
+  # ── Skip check at step banner ────────────────────────────────────────────────
+  while true; do
+    read -rp "👉 Press Enter to configure PostgreSQL, type 'skip' to skip, or 'back': " _NAV <&3
+    _NAV=$(echo "$_NAV" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    if [[ "$_NAV" == "skip" ]]; then
+      SKIP_POSTGRES=true
+      log_warn "PostgreSQL step skipped. No database will be installed or configured."
+      CURRENT_STEP=4; break
+    elif [[ "$_NAV" == "back" ]]; then
+      CURRENT_STEP=2; break
+    elif [[ -z "$_NAV" ]]; then
+      SKIP_POSTGRES=false; break
+    else
+      log_warn "Type Enter to continue, 'skip', or 'back'."; continue
+    fi
+  done
+  [ "$CURRENT_STEP" -ne 3 ] && continue
+
+  DEFAULT_DB="${CLEAN_APP_NAME}_db"
+  DEFAULT_USER="${CLEAN_APP_NAME}_user"
+
+  while true; do
+    read -rp "👉 Enter Database Name [default: ${DB_NAME:-$DEFAULT_DB}]: " _IN <&3
+    _TRIM=$(echo "$_IN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    [[ "$_TRIM" == "back" ]] && { CURRENT_STEP=2; break; }
+    [[ "$_TRIM" == "skip" ]] && { SKIP_POSTGRES=true; CURRENT_STEP=4; break; }
+    DB_NAME="${_IN:-${DB_NAME:-$DEFAULT_DB}}"
+    echo -e "   ${GREEN}✓ Database Name:${NC} ${BOLD}$DB_NAME${NC}"
+    break
+  done
+  [ "$CURRENT_STEP" -ne 3 ] && continue
+  echo ""
+
+  while true; do
+    read -rp "👉 Enter Database Username [default: ${DB_USER:-$DEFAULT_USER}]: " _IN <&3
+    _TRIM=$(echo "$_IN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    [[ "$_TRIM" == "back" ]] && { CURRENT_STEP=2; break; }
+    [[ "$_TRIM" == "skip" ]] && { SKIP_POSTGRES=true; CURRENT_STEP=4; break; }
+    DB_USER="${_IN:-${DB_USER:-$DEFAULT_USER}}"
+    echo -e "   ${GREEN}✓ Database User:${NC} ${BOLD}$DB_USER${NC}"
+    break
+  done
+  [ "$CURRENT_STEP" -ne 3 ] && continue
+  echo ""
+
+  print_info_field "Password for this PostgreSQL user."
+  print_hint_field "Type a custom password, or press Enter to auto-generate a secure random 16-char password."
+  while true; do
+    read -rp "👉 Enter Database Password (press Enter to auto-generate) [back/skip]: " _IN <&3
+    _TRIM=$(echo "$_IN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    [[ "$_TRIM" == "back" ]] && { CURRENT_STEP=2; break; }
+    [[ "$_TRIM" == "skip" ]] && { SKIP_POSTGRES=true; CURRENT_STEP=4; break; }
+    if [ -z "$_IN" ]; then
+      DB_PASS=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)
+      log_info "Auto-generated Database Password: ${GREEN}${BOLD}${DB_PASS}${NC}"
+    else
+      DB_PASS="$_IN"
+      echo -e "   ${GREEN}✓ Custom Database Password set.${NC}"
+    fi
+    break
+  done
+  [ "$CURRENT_STEP" -ne 3 ] && continue
+  echo ""
+
+  print_info_field "Allow external database connections from your local PC (DBeaver, TablePlus, pgAdmin)?"
+  print_hint_field "Opens PostgreSQL port 5432 in firewall and updates pg_hba.conf."
+  print_default_field "${ALLOW_PG_REMOTE:-Y} (press Enter to allow, or 'n' to keep localhost-only)"
+  while true; do
+    read -rp "👉 Enable remote PostgreSQL access? [Y/n/back/skip]: " _IN <&3
+    _TRIM=$(echo "$_IN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    [[ "$_TRIM" == "back" ]] && { CURRENT_STEP=2; break; }
+    [[ "$_TRIM" == "skip" ]] && { SKIP_POSTGRES=true; CURRENT_STEP=4; break; }
+    ALLOW_PG_REMOTE="${_IN:-${ALLOW_PG_REMOTE:-Y}}"
+    break
+  done
+  [ "$CURRENT_STEP" -ne 3 ] && continue
+
+  PG_CLIENT_IP="0.0.0.0/0"
+  SPECIFIC_IP=""
+  if [[ "$ALLOW_PG_REMOTE" =~ ^[Yy]$ ]]; then
+    print_info_field "IP Whitelist for remote database access."
+    print_hint_field "For high security, enter your computer's public IP (from https://ipinfo.io/ip)."
+    print_hint_field "Press Enter to allow connections from any IP address (0.0.0.0/0)."
+    read -rp "👉 Enter your Local Public IP [press Enter for 0.0.0.0/0]: " SPECIFIC_IP <&3
+    SPECIFIC_IP=$(echo "$SPECIFIC_IP" | tr -d "[:space:]")
+    if [ -n "$SPECIFIC_IP" ]; then
+      PG_CLIENT_IP="${SPECIFIC_IP}/32"
+      echo -e "   ${GREEN}✓ Remote access allowed only from:${NC} ${BOLD}$PG_CLIENT_IP${NC}"
+    else
+      echo -e "   ${GREEN}✓ Remote access allowed from anywhere:${NC} ${BOLD}0.0.0.0/0${NC}"
+    fi
   else
-    log_warn "Invalid input '$CONFIRM'. Please enter 'y' to proceed or 'n' to abort."
+    echo -e "   ${YELLOW}✓ Remote access disabled (PostgreSQL will only be accessible locally).${NC}"
   fi
-done
+
+  CURRENT_STEP=4
+  continue
+fi
+
+# ==============================================================================
+# STEP 4: Redis Cache Configuration
+# ==============================================================================
+if [ "$CURRENT_STEP" -eq 4 ]; then
+  print_step_banner "4" "$TOTAL_STEPS" "Redis Cache Configuration"
+  print_nav_hint_skip
+  print_info_field "In-memory key-value cache and background job queue store (BullMQ, Redis client)."
+  echo ""
+
+  # ── Skip check at step banner ────────────────────────────────────────────────
+  while true; do
+    read -rp "👉 Press Enter to configure Redis, type 'skip' to skip, or 'back': " _NAV <&3
+    _NAV=$(echo "$_NAV" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    if [[ "$_NAV" == "skip" ]]; then
+      SKIP_REDIS=true
+      log_warn "Redis step skipped. Redis will not be installed or configured."
+      CURRENT_STEP=5; break
+    elif [[ "$_NAV" == "back" ]]; then
+      CURRENT_STEP=3; break
+    elif [[ -z "$_NAV" ]]; then
+      SKIP_REDIS=false; break
+    else
+      log_warn "Type Enter to continue, 'skip', or 'back'."; continue
+    fi
+  done
+  [ "$CURRENT_STEP" -ne 4 ] && continue
+
+  print_default_field "${REDIS_PORT:-6379} (press Enter to accept default)"
+  while true; do
+    read -rp "👉 Enter Redis Port [default: ${REDIS_PORT:-6379}]: " _IN <&3
+    _TRIM=$(echo "$_IN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    [[ "$_TRIM" == "back" ]] && { CURRENT_STEP=3; break; }
+    [[ "$_TRIM" == "skip" ]] && { SKIP_REDIS=true; CURRENT_STEP=5; break; }
+    _IN="${_IN:-${REDIS_PORT:-6379}}"
+    [[ ! "$_IN" =~ ^[0-9]+$ ]] || [ "$_IN" -lt 1 ] || [ "$_IN" -gt 65535 ] && {
+      log_warn "Invalid port! Please enter a number between 1 and 65535."; continue; }
+    REDIS_PORT="$_IN"
+    echo -e "   ${GREEN}✓ Configured Redis Port:${NC} ${BOLD}$REDIS_PORT${NC}"
+    break
+  done
+  [ "$CURRENT_STEP" -ne 4 ] && continue
+  echo ""
+
+  print_info_field "Optional password authentication for Redis."
+  print_hint_field "Redis is bound to localhost (127.0.0.1) only, so a password is optional."
+  print_default_field "None (press Enter for no password)"
+  while true; do
+    read -rp "👉 Enter Redis Password (optional, press Enter for none) [back/skip]: " _IN <&3
+    _TRIM=$(echo "$_IN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    [[ "$_TRIM" == "back" ]] && { CURRENT_STEP=3; break; }
+    [[ "$_TRIM" == "skip" ]] && { SKIP_REDIS=true; CURRENT_STEP=5; break; }
+    REDIS_PASS="$_IN"
+    if [ -n "$REDIS_PASS" ]; then
+      echo -e "   ${GREEN}✓ Redis password configured.${NC}"
+    else
+      echo -e "   ${GREEN}✓ No password set (localhost internal access only).${NC}"
+    fi
+    break
+  done
+  [ "$CURRENT_STEP" -ne 4 ] && continue
+
+  CURRENT_STEP=5
+  continue
+fi
+
+# ==============================================================================
+# STEP 5: Environment Variables (.env) Setup
+# ==============================================================================
+if [ "$CURRENT_STEP" -eq 5 ]; then
+  print_step_banner "5" "$TOTAL_STEPS" "Environment Variables (.env) Setup"
+  print_nav_hint
+  print_info_field "Application environment configuration (.env file) for your Node.js app."
+  echo ""
+  echo -e "  ${BOLD}💡 The following default system variables will be generated automatically:${NC}"
+  echo -e "  ┌────────────────────────────────────────────────────────────────────────┐"
+  echo -e "  │ ${CYAN}PORT${NC}=${GREEN}$APP_PORT${NC}"
+  echo -e "  │ ${CYAN}NODE_ENV${NC}=${GREEN}\"PROD\"${NC}"
+  echo -e "  │ ${CYAN}DB_HOST${NC}=${GREEN}\"localhost\"${NC}"
+  echo -e "  │ ${CYAN}DB_PORT${NC}=${GREEN}5432${NC}"
+  echo -e "  │ ${CYAN}DB_NAME${NC}=${GREEN}\"$DB_NAME\"${NC}"
+  echo -e "  │ ${CYAN}DB_USER${NC}=${GREEN}\"$DB_USER\"${NC}"
+  echo -e "  │ ${CYAN}DB_PASS${NC}=${GREEN}\"$DB_PASS\"${NC}"
+  echo -e "  │ ${CYAN}REDIS_HOST${NC}=${GREEN}\"127.0.0.1\"${NC}"
+  echo -e "  │ ${CYAN}REDIS_PORT${NC}=${GREEN}\"$REDIS_PORT\"${NC}"
+  echo -e "  └────────────────────────────────────────────────────────────────────────┘"
+  echo ""
+  print_hint_field "You can paste additional environment variables (JWT_SECRET, API_KEYS, etc.)"
+  print_hint_field "now, and they will be automatically appended to your .env file."
+  print_hint_field "Press Enter (N) if you don't have extra variables right now."
+  echo ""
+
+  EXTRA_ENV_CONTENT=""
+  NEED_EXTRA_ENV=false
+  _BACK_FROM_ENV=false
+
+  while true; do
+    if ! read -rp "👉 Do you want to paste additional .env variables now? [y/N/back]: " HAS_EXTRA_ENV <&3; then
+      HAS_EXTRA_ENV="n"
+    fi
+    HAS_EXTRA_ENV="${HAS_EXTRA_ENV%$'\r'}"
+    HAS_EXTRA_ENV="${HAS_EXTRA_ENV//$'\e[200~'/}"
+    HAS_EXTRA_ENV="${HAS_EXTRA_ENV//$'\e[201~'/}"
+    HAS_EXTRA_ENV_TRIMMED="${HAS_EXTRA_ENV#"${HAS_EXTRA_ENV%%[![:space:]]*}"}"
+    HAS_EXTRA_ENV_TRIMMED="${HAS_EXTRA_ENV_TRIMMED%"${HAS_EXTRA_ENV_TRIMMED##*[![:space:]]}"}"
+
+    if [[ "$HAS_EXTRA_ENV_TRIMMED" == "back" ]]; then
+      CURRENT_STEP=4; _BACK_FROM_ENV=true; break
+    elif [[ "$HAS_EXTRA_ENV_TRIMMED" =~ ^[Yy]$ ]]; then
+      NEED_EXTRA_ENV=true; break
+    elif [[ -z "$HAS_EXTRA_ENV_TRIMMED" || "$HAS_EXTRA_ENV_TRIMMED" =~ ^[Nn]$ ]]; then
+      NEED_EXTRA_ENV=false; break
+    elif [[ "$HAS_EXTRA_ENV" == *"="* || "$HAS_EXTRA_ENV_TRIMMED" == \#* ]]; then
+      log_info "Detected pasted .env line! Entering paste mode automatically..."
+      EXTRA_ENV_CONTENT+="$HAS_EXTRA_ENV"$'\n'
+      NEED_EXTRA_ENV=true; break
+    else
+      log_warn "Invalid choice '$HAS_EXTRA_ENV_TRIMMED'. Enter 'y', 'n', or 'back'."
+    fi
+  done
+  [ "$_BACK_FROM_ENV" = true ] && continue
+
+  if [ "$NEED_EXTRA_ENV" = true ]; then
+    echo ""
+    echo -e "${CYAN}${BOLD}Type or paste your additional .env variables below.${NC}"
+    echo -e "${YELLOW}${BOLD}👉 When finished, type 'done' (or 'END_OF_ENV') on a new line and press Enter, or press Ctrl+D:${NC}"
+    while IFS= read -r line <&3 || [ -n "$line" ]; do
+      line="${line%$'\r'}"
+      line="${line//$'\e[200~'/}"
+      line="${line//$'\e[201~'/}"
+      trimmed_line=$(echo "$line" | tr -d '[:space:]')
+      case "$trimmed_line" in
+        done|DONE|end|END|END_OF_ENV|end_of_env|EOF|eof) break ;;
+      esac
+      EXTRA_ENV_CONTENT+="$line"$'\n'
+    done
+    log_success "Additional .env variables captured."
+  else
+    log_info "Default system variables will be generated. You can add more later at $APP_DIR/.env."
+  fi
+
+  # ------------------------------------------------------------------------------
+  # REVIEW & CONFIRMATION
+  # ------------------------------------------------------------------------------
+  echo ""
+  echo -e "${CYAN}${BOLD}======================================================================${NC}"
+  echo -e "${CYAN}${BOLD}                     📋 CONFIGURATION SUMMARY                         ${NC}"
+  echo -e "${CYAN}${BOLD}======================================================================${NC}"
+  echo -e "  ${BOLD}🌐 Domain URL:${NC}            ${GREEN}https://$DOMAIN_NAME${NC}"
+  echo -e "  ${BOLD}🔒 SSL Admin Email:${NC}       ${GREEN}$SSL_EMAIL${NC}"
+  echo -e "  ${BOLD}📦 Git Repository:${NC}        ${GREEN}$GIT_REPO_URL${NC} (Branch: ${GREEN}$GIT_BRANCH${NC})"
+  echo -e "  ${BOLD}📁 Installation Dir:${NC}      ${GREEN}$APP_DIR${NC}"
+  echo -e "  ${BOLD}🔌 Node.js Internal Port:${NC} ${GREEN}$APP_PORT${NC} (Nginx proxies 80/443 -> $APP_PORT)"
+  echo -e "  ${BOLD}🗄️ PostgreSQL Database:${NC}   ${GREEN}$DB_NAME${NC}"
+  echo -e "  ${BOLD}👤 PostgreSQL User:${NC}       ${GREEN}$DB_USER${NC}"
+  echo -e "  ${BOLD}🔑 PostgreSQL Password:${NC}   ${YELLOW}$DB_PASS${NC}"
+  echo -e "  ${BOLD}🌍 PostgreSQL Remote:${NC}     ${GREEN}${ALLOW_PG_REMOTE:-Y}${NC} (Allowed: ${GREEN}$PG_CLIENT_IP${NC})"
+  echo -e "  ${BOLD}⚡ Redis Port:${NC}            ${GREEN}$REDIS_PORT${NC}$([ -n "$REDIS_PASS" ] && echo " (Password protected)" || echo " (No password)")"
+  if [ -n "$EXTRA_ENV_CONTENT" ]; then
+    echo -e "  ${BOLD}📄 .env Configuration:${NC}    ${GREEN}Default DB/Redis variables + custom variables${NC}"
+  else
+    echo -e "  ${BOLD}📄 .env Configuration:${NC}    ${GREEN}Default DB/Redis variables generated${NC}"
+  fi
+  echo -e "${CYAN}${BOLD}======================================================================${NC}"
+  echo -e "  ${YELLOW}${BOLD}▸ Tip:${NC} Type ${CYAN}back${NC} to return to Step 5, or ${CYAN}n${NC} to abort."
+  echo ""
+
+  while true; do
+    if ! read -rp "👉 Are you ready to proceed with the automated installation? [Y/n/back]: " CONFIRM <&3; then
+      echo ""
+      log_warn "Input stream closed (EOF). Installation aborted."
+      exit 0
+    fi
+    CONFIRM="${CONFIRM%$'\r'}"
+    CONFIRM=$(echo "$CONFIRM" | tr -d '[:space:]')
+    CONFIRM="${CONFIRM:-Y}"
+    if [[ "$CONFIRM" == "back" ]]; then
+      CURRENT_STEP=5; break
+    elif [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
+      CURRENT_STEP=$(( TOTAL_STEPS + 1 ))   # exit the config loop
+      break
+    elif [[ "$CONFIRM" =~ ^[Nn]$ ]]; then
+      log_warn "Installation aborted by user."
+      exit 0
+    else
+      log_warn "Invalid input '$CONFIRM'. Please enter 'y' to proceed, 'n' to abort, or 'back'."
+    fi
+  done
+  continue
+fi
+
+done   # end of CURRENT_STEP navigation loop
 
 START_TIME=$(date +%s)
 
