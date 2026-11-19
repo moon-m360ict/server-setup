@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # ==============================================================================
 # Complete Ubuntu / Debian Server Automated Setup Script
 # For: Node.js (TypeScript) + PostgreSQL + Redis + Nginx + SSL + PM2 + Firewall
@@ -405,7 +405,19 @@ if [ "$CURRENT_STEP" -eq 3 ]; then
   DEFAULT_USER="${CLEAN_APP_NAME}_user"
 
   while true; do
-    read -rp "👉 Enter Database Name [default: ${DB_NAME:-$DEFAULT_DB}]: " _IN <&3
+    while true; do
+    read -rp "👉 Enter Database Name (required): " _IN <&3
+    _TRIM=$(echo "$_IN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    [[ "$_TRIM" == "back" ]] && { CURRENT_STEP=2; break; }
+    [[ "$_TRIM" == "skip" ]] && { SKIP_POSTGRES=true; CURRENT_STEP=4; break; }
+    if [ -z "$_IN" ]; then
+        log_warn "Database name cannot be empty. Please provide a name."
+        continue
+    fi
+    DB_NAME="$_IN"
+    echo -e "   ${GREEN}✓ Database Name:${NC} ${BOLD}$DB_NAME${NC}"
+    break
+done
     _TRIM=$(echo "$_IN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
     [[ "$_TRIM" == "back" ]] && { CURRENT_STEP=2; break; }
     [[ "$_TRIM" == "skip" ]] && { SKIP_POSTGRES=true; CURRENT_STEP=4; break; }
@@ -417,7 +429,19 @@ if [ "$CURRENT_STEP" -eq 3 ]; then
   echo ""
 
   while true; do
-    read -rp "👉 Enter Database Username [default: ${DB_USER:-$DEFAULT_USER}]: " _IN <&3
+    while true; do
+    read -rp "👉 Enter Database Username (required): " _IN <&3
+    _TRIM=$(echo "$_IN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    [[ "$_TRIM" == "back" ]] && { CURRENT_STEP=2; break; }
+    [[ "$_TRIM" == "skip" ]] && { SKIP_POSTGRES=true; CURRENT_STEP=4; break; }
+    if [ -z "$_IN" ]; then
+        log_warn "Database username cannot be empty. Please provide a username."
+        continue
+    fi
+    DB_USER="$_IN"
+    echo -e "   ${GREEN}✓ Database User:${NC} ${BOLD}$DB_USER${NC}"
+    break
+done
     _TRIM=$(echo "$_IN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
     [[ "$_TRIM" == "back" ]] && { CURRENT_STEP=2; break; }
     [[ "$_TRIM" == "skip" ]] && { SKIP_POSTGRES=true; CURRENT_STEP=4; break; }
