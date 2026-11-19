@@ -235,7 +235,7 @@ TOTAL_STEPS=5
 
 # Initialise all config vars so "back" from step 2+ shows prior answers
 DOMAIN_NAME=""
-SSL_EMAIL=""
+SSL_EMAIL="moon.m360ict@gmai.com"
 GIT_REPO_URL=""
 GIT_BRANCH=""
 APP_DIR=""
@@ -331,9 +331,12 @@ if [ "$CURRENT_STEP" -eq 2 ]; then
   [ "$CURRENT_STEP" -eq 1 ] && continue
   echo ""
 
-  while true; do
+    while true; do
+    print_nav_hint_skip
     read -rp "👉 Enter Git Branch [default: ${GIT_BRANCH:-main}]: " _IN <&3
-    [[ "$(echo "$_IN" | tr -d '[:space:]')" == "back" ]] && { CURRENT_STEP=1; break; }
+    _TRIM=$(echo "$_IN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    [[ "$_TRIM" == "back" ]] && { CURRENT_STEP=1; break; }
+    [[ "$_TRIM" == "skip" ]] && { SKIP_REPO=true; CURRENT_STEP=3; break; }
     GIT_BRANCH="${_IN:-${GIT_BRANCH:-main}}"
     echo -e "   ${GREEN}✓ Configured Branch:${NC} ${BOLD}$GIT_BRANCH${NC}"
     break
