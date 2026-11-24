@@ -316,12 +316,24 @@ if [ "$CURRENT_STEP" -eq 2 ]; then
   echo ""
 
   while true; do
+    print_nav_hint_skip
     read -rp "👉 Enter GitHub Repository URL [${GIT_REPO_URL:-required}]: " _IN <&3
-    [[ "$(echo "$_IN" | tr -d '[:space:]')" == "back" ]] && { CURRENT_STEP=1; break; }
+    _TRIM=$(echo "$_IN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    [[ "$_TRIM" == "back" ]] && { CURRENT_STEP=1; break; }
+    [[ "$_TRIM" == "skip" ]] && { SKIP_REPO=true; CURRENT_STEP=3; break; }
     _IN="${_IN:-$GIT_REPO_URL}"
     _IN=$(echo "$_IN" | tr -d "[:space:]")
-    [ -z "$_IN" ] && { log_warn "GitHub repository URL cannot be empty!"; continue; }
-    GIT_REPO_URL="$_IN"
+    if [ -z "$_IN" ]; then
+      log_warn "GitHub repository URL cannot be empty!"
+      continue
+    fi
+    # Validate URL structure (expects token auth or public URL)
+    if [[ "$_IN" =~ ^https://([^@]+)@github\.com/[^/]+/[^/]+\.git$ ]] || [[ "$_IN" =~ ^git@github\.com:[^/]+/[^/]+\.git$ ]] || [[ "$_IN" =~ ^https://github\.com/[^/]+/[^/]+\.git$ ]]; then
+      GIT_REPO_URL="$_IN"
+    else
+      log_warn "Repository URL format looks invalid. Expected https://<token>@github.com/<org>/<repo>.git or git@github.com:<org>/<repo>.git"
+      continue
+    fi
     REPO_NAME=$(basename -s .git "$GIT_REPO_URL")
     CLEAN_APP_NAME=$(echo "$REPO_NAME" | tr '-' '_' | tr '.' '_' | tr -dc 'a-zA-Z0-9_')
     CLEAN_APP_NAME="${CLEAN_APP_NAME:-app}"
